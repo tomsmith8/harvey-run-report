@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Run Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#16130e; --bg2:#1c1812; --panel:#211c14; --panel2:#282217;
+  --line:rgba(232,180,90,.16); --line2:rgba(232,180,90,.32);
+  --ink:#ede4d3; --muted:#a89b82; --faint:#6f6552;
+  --accent:#e8b45a; --accent-dim:#b58435;
+  --pass:#2f9e61; --warn:#c07f13; --diverged:#9085e9; --fail:#e05252;
+  --ph-setup:#3987e5; --ph-context:#d95926; --ph-draft:#199e70; --ph-verify:#c98500; --ph-score:#d55181;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --display:"Fraunces",Georgia,serif;
+  --body:"Archivo",-apple-system,"Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;
+  background-image:radial-gradient(ellipse 90% 40% at 50% -5%,rgba(232,180,90,.07),transparent 60%);}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(232,180,90,.35)}
+a:hover{color:#f5cd85;border-bottom-color:#f5cd85}
+::selection{background:rgba(232,180,90,.25)}
+
+/* layout */
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);max-width:1360px;margin:0 auto}
+nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:28px 18px 40px 22px;
+  border-right:1px solid var(--line);font-family:var(--mono);font-size:11px}
+nav .brand{font-family:var(--display);font-weight:900;font-size:19px;color:var(--accent);letter-spacing:.5px;margin-bottom:2px}
+nav .sub{color:var(--faint);margin-bottom:22px;font-size:10px;letter-spacing:.08em}
+nav .grp{color:var(--faint);letter-spacing:.14em;font-size:9px;margin:16px 0 6px;text-transform:uppercase}
+nav a{display:block;color:var(--muted);border:none;padding:3px 8px;margin-left:-8px;border-radius:4px;letter-spacing:.02em}
+nav a:hover{color:var(--ink);background:rgba(232,180,90,.07)}
+nav a.on{color:var(--accent);background:rgba(232,180,90,.1)}
+nav a.sub2{padding-left:20px;font-size:10px}
+main{padding:0 46px 120px;min-width:0}
+section{padding-top:64px}
+.kicker{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent-dim);margin-bottom:10px}
+.kicker::before{content:"§ ";color:var(--faint)}
+h1{font-family:var(--display);font-weight:900;font-size:44px;line-height:1.04;letter-spacing:-.5px;margin:8px 0 14px}
+h2{font-family:var(--display);font-weight:600;font-size:29px;letter-spacing:-.3px;margin-bottom:14px}
+h3{font-family:var(--display);font-weight:600;font-size:19px;margin-bottom:8px}
+p.lede{font-size:16.5px;color:var(--muted);max-width:70ch}
+.rule{border:none;border-top:1px solid var(--line);margin:26px 0}
+
+/* chips + lamps */
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;
+  padding:3px 10px;border:1px solid var(--line2);border-radius:999px;color:var(--muted);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:500}
+.lamp{width:8px;height:8px;border-radius:50%;display:inline-block;box-shadow:0 0 8px currentColor}
+.s-pass{color:var(--pass)} .s-fail{color:var(--fail)} .s-warn{color:var(--warn)} .s-div{color:var(--diverged)}
+.badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:2px 8px;border-radius:4px;text-transform:uppercase}
+.b-pass{background:rgba(47,158,97,.15);color:#5cc98d;border:1px solid rgba(47,158,97,.4)}
+.b-fail{background:rgba(224,82,82,.14);color:#ef8a8a;border:1px solid rgba(224,82,82,.45)}
+.b-warn{background:rgba(192,127,19,.15);color:#e0a94f;border:1px solid rgba(192,127,19,.45)}
+.b-div{background:rgba(144,133,233,.13);color:#b3aaf2;border:1px solid rgba(144,133,233,.4)}
+.b-mut{background:rgba(168,155,130,.1);color:var(--muted);border:1px solid var(--line)}
+
+/* hero */
+.hero{display:grid;grid-template-columns:auto 1fr;gap:44px;align-items:end;margin-top:18px}
+.hero .big{font-family:var(--display);font-weight:900;font-size:120px;line-height:.9;letter-spacing:-4px;
+  background:linear-gradient(160deg,#f7e3b8,#e8b45a 55%,#a87b2e);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .big small{font-size:44px;letter-spacing:-1px;color:var(--faint);-webkit-text-fill-color:var(--faint)}
+.statrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.verdict{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:#ef8a8a;border:1px solid rgba(224,82,82,.5);
+  background:rgba(224,82,82,.08);padding:6px 14px;border-radius:6px;display:inline-flex;gap:9px;align-items:center;animation:blink 2.4s ease-in-out infinite}
+@keyframes blink{0%,100%{box-shadow:0 0 0 rgba(224,82,82,0)}50%{box-shadow:0 0 18px rgba(224,82,82,.35)}}
+
+/* panels & tables */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-top:16px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--faint);text-align:left;
+  padding:7px 10px;border-bottom:1px solid var(--line2)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.mono,.mono{font-family:var(--mono);font-size:12px}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:4px 16px;font-size:13.5px}
+.kv dt{font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:2px}
+.kv dd{color:var(--ink)}
+
+/* gantt */
+.gantt-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg2);margin-top:16px}
+.gantt{position:relative;min-width:980px;padding:34px 20px 16px 236px}
+.g-axis{position:absolute;top:0;left:236px;right:20px;height:100%}
+.g-tick{position:absolute;top:0;bottom:0;border-left:1px dashed rgba(232,180,90,.08)}
+.g-tick span{position:absolute;top:8px;left:4px;font-family:var(--mono);font-size:9px;color:var(--faint)}
+.g-row{position:relative;height:20px}
+.g-label{position:absolute;left:-216px;width:206px;top:2px;font-family:var(--mono);font-size:10.5px;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.g-label a{color:inherit;border:none}
+.g-label a:hover{color:var(--accent)}
+.g-bar{position:absolute;top:4px;height:12px;border-radius:3px 4px 4px 3px;min-width:3px;opacity:.92;cursor:default}
+.g-bar:hover{opacity:1;box-shadow:0 0 10px rgba(232,180,90,.25)}
+.g-legend{display:flex;gap:16px;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.g-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+
+/* rubric strip */
+.strip{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin:18px 0 8px}
+.cell{aspect-ratio:1.35;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:var(--mono);cursor:pointer;border:1px solid transparent;transition:transform .12s}
+.cell:hover{transform:translateY(-2px)}
+.cell .g{font-size:13px;font-weight:600}.cell .id{font-size:8.5px;opacity:.75;margin-top:1px}
+.cell.pass{background:rgba(47,158,97,.13);border-color:rgba(47,158,97,.35);color:#5cc98d}
+.cell.fail{background:rgba(224,82,82,.16);border-color:rgba(224,82,82,.55);color:#ef8a8a;animation:blink 2.4s infinite}
+.filters{display:flex;gap:8px;margin:14px 0 4px}
+.fbtn{font-family:var(--mono);font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid var(--line2);
+  background:none;color:var(--muted);cursor:pointer}
+.fbtn.on{color:var(--accent);border-color:var(--accent-dim);background:rgba(232,180,90,.08)}
+.rubric-item{border:1px solid var(--line);border-radius:8px;margin-top:8px;background:var(--panel)}
+.rubric-item[data-v=fail]{border-color:rgba(224,82,82,.4)}
+.rubric-item summary{display:flex;gap:12px;align-items:baseline;padding:10px 14px;cursor:pointer;list-style:none}
+.rubric-item summary::-webkit-details-marker{display:none}
+.rubric-item .rid{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:46px}
+.rubric-item .rtitle{flex:1;font-size:13.5px}
+.rubric-item .rbody{padding:2px 14px 14px 72px;color:var(--muted);font-size:13px}
+.rubric-item .rbody .mc{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-bottom:8px;border-left:2px solid var(--line2);padding-left:10px}
+
+/* route board */
+.route{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:18px 4px 10px;margin-top:6px}
+.station{display:flex;flex-direction:column;align-items:center;min-width:86px;position:relative;text-align:center}
+.station::before{content:"";position:absolute;top:9px;left:-50%;width:100%;height:2px;background:var(--line2);z-index:0}
+.station:first-child::before{display:none}
+.st-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:11px;z-index:1;background:var(--bg2);border:2px solid currentColor;box-shadow:0 0 10px rgba(0,0,0,.4)}
+.st-name{font-family:var(--mono);font-size:9.5px;margin-top:7px;max-width:96px;color:var(--muted);line-height:1.3}
+.st-name a{color:inherit;border-bottom:1px dotted var(--faint)}
+.st-name a:hover{color:var(--accent)}
+.station .tip{display:none;position:absolute;top:44px;z-index:5;width:230px;background:var(--panel2);border:1px solid var(--line2);
+  border-radius:8px;padding:9px 11px;font-size:11px;color:var(--ink);text-align:left;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.station:hover .tip{display:block}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
+.qcard{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.qcard .ql{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+.qcard .qa{font-size:13px}
+.qcard .qa b{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.fail-block{border:1px solid rgba(224,82,82,.35);border-radius:12px;padding:22px 24px;margin-top:26px;
+  background:linear-gradient(180deg,rgba(224,82,82,.05),transparent 130px)}
+.rootcause{border-left:3px solid var(--fail);padding:10px 16px;margin-top:16px;background:rgba(224,82,82,.06);border-radius:0 8px 8px 0;font-size:14px}
+.fixes li{margin:6px 0 6px 18px;font-size:13.5px}
+
+/* agent cards */
+.agent-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:20px 22px;margin-top:22px}
+.agent-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px}
+.agent-head h3{font-size:22px;margin:0}
+.toolbars{margin-top:12px}
+.tb{display:grid;grid-template-columns:150px 1fr 40px;align-items:center;gap:10px;margin:3px 0;font-family:var(--mono);font-size:11px}
+.tb .bar{height:10px;border-radius:2px 3px 3px 2px;background:var(--ph-setup);min-width:2px}
+.tb .n{color:var(--muted);text-align:right}
+.tb .t{color:var(--muted);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+@media (max-width:900px){.cols2{grid-template-columns:1fr}.wrap{grid-template-columns:1fr}nav{display:none}}
+.mini-h{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:12px 0 6px}
+ul.plain{list-style:none}
+ul.plain li{margin:5px 0;padding-left:16px;position:relative;font-size:13px;color:var(--muted)}
+ul.plain li::before{content:"▸";position:absolute;left:0;color:var(--accent-dim);font-size:10px;top:3px}
+ul.plain li.anom::before{content:"⚠";color:var(--warn)}
+details.fold{border:1px solid var(--line);border-radius:8px;margin-top:12px;background:var(--bg2)}
+details.fold summary{font-family:var(--mono);font-size:11px;color:var(--muted);padding:9px 14px;cursor:pointer;list-style:none}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary::before{content:"▸ ";color:var(--accent-dim)}
+details.fold[open] summary::before{content:"▾ "}
+details.fold .inner{padding:4px 18px 16px;font-size:13px;color:var(--muted);max-height:480px;overflow-y:auto}
+.md h1,.md h2,.md h3{font-family:var(--display);font-size:16px;color:var(--ink);margin:14px 0 6px}
+.md p{margin:7px 0}
+.md li{margin:3px 0 3px 18px}
+.md code{font-family:var(--mono);font-size:11.5px;background:rgba(232,180,90,.08);padding:1px 5px;border-radius:4px;color:#e0c896}
+.md strong{color:var(--ink)}
+
+/* tooltip */
+#tt{position:fixed;z-index:50;display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;
+  padding:8px 11px;font-family:var(--mono);font-size:11px;color:var(--ink);pointer-events:none;max-width:320px;box-shadow:0 12px 30px rgba(0,0,0,.55)}
+#tt .d{color:var(--muted)}
+
+/* document viewer overlay */
+#viewer{position:fixed;inset:0;z-index:90;display:none;background:rgba(12,10,6,.78);backdrop-filter:blur(6px)}
+#viewer.open{display:flex;align-items:center;justify-content:center}
+.v-frame{width:min(960px,94vw);height:92vh;background:var(--bg2);border:1px solid var(--line2);border-radius:14px;
+  display:flex;flex-direction:column;box-shadow:0 30px 90px rgba(0,0,0,.7)}
+.v-head{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.v-head .v-title{font-family:var(--display);font-weight:600;font-size:17px;flex:1;min-width:200px}
+.v-head .v-kind{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase}
+.v-search{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line2);border-radius:6px;
+  color:var(--ink);padding:6px 10px;width:190px}
+.v-search:focus{outline:none;border-color:var(--accent-dim)}
+.v-close{background:none;border:1px solid var(--line2);border-radius:6px;color:var(--muted);font-family:var(--mono);
+  font-size:12px;padding:6px 12px;cursor:pointer}
+.v-close:hover{color:var(--ink);border-color:var(--accent-dim)}
+.v-note{padding:10px 20px;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--line);background:rgba(232,180,90,.04)}
+.v-body{flex:1;overflow-y:auto;padding:22px 30px;font-size:14px;line-height:1.65}
+.v-body h2{font-size:20px;margin:20px 0 8px}
+.v-body h3{font-size:16px;margin:16px 0 6px}
+.v-body h4{font-family:var(--body);font-weight:600;font-size:13.5px;color:var(--accent);margin:14px 0 4px;letter-spacing:.02em}
+.v-body p{margin:7px 0;color:#d8cfbd}
+.v-body .tblwrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:8px}
+.v-body table{font-size:12px;min-width:100%}
+.v-body th{background:rgba(232,180,90,.06);white-space:nowrap}
+.v-body td{color:#d8cfbd}
+.v-body .emlhdr{font-family:var(--mono);font-size:11.5px;color:var(--accent-dim);background:rgba(232,180,90,.05);
+  border-left:2px solid var(--accent-dim);padding:8px 12px;margin:14px 0 8px;border-radius:0 6px 6px 0}
+.v-body pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;color:#d8cfbd}
+.v-body mark{background:rgba(232,180,90,.35);color:#ffe9bd;border-radius:3px;padding:0 2px;scroll-margin:120px}
+.v-body mark.cur{background:var(--accent);color:#16130e}
+.v-count{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.v-nav{background:none;border:1px solid var(--line2);border-radius:6px;color:var(--muted);cursor:pointer;
+  font-family:var(--mono);font-size:12px;padding:6px 9px}
+.v-nav:hover{color:var(--accent)}
+
+/* doc + workfile cards */
+.doccards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:16px}
+.doccard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;cursor:pointer;transition:transform .12s,border-color .12s}
+.doccard:hover{transform:translateY(-2px);border-color:var(--accent-dim)}
+.doccard .dc-kind{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.doccard .dc-title{font-family:var(--display);font-weight:600;font-size:15px;margin:5px 0 4px}
+.doccard .dc-file{font-family:var(--mono);font-size:10.5px;color:var(--muted);word-break:break-all}
+.doccard.deliv{border-color:rgba(232,180,90,.5);background:linear-gradient(170deg,rgba(232,180,90,.08),var(--panel) 60%)}
+.srcchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.srcchip{font-family:var(--mono);font-size:10px;padding:2px 9px;border-radius:999px;border:1px solid var(--line2);
+  color:var(--accent-dim);cursor:pointer;background:none}
+.srcchip:hover{color:var(--accent);border-color:var(--accent)}
+
+.sev-critical{color:#ef8a8a}.sev-high{color:#e0a94f}.sev-medium{color:#b3aaf2}
+.num{font-family:var(--display);font-weight:900;font-size:34px;letter-spacing:-1px}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.stat .l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+footer{margin-top:80px;padding-top:20px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+</style>
+</head>
+<body>
+<div id="tt"></div>
+<div id="viewer">
+  <div class="v-frame">
+    <div class="v-head">
+      <span class="v-kind" id="v-kind"></span>
+      <div class="v-title" id="v-title"></div>
+      <input class="v-search" id="v-search" placeholder="search in document…">
+      <span class="v-count" id="v-count"></span>
+      <button class="v-nav" id="v-prev" title="previous match">↑</button>
+      <button class="v-nav" id="v-next" title="next match">↓</button>
+      <button class="v-close" id="v-close">esc ✕</button>
+    </div>
+    <div class="v-note" id="v-note" style="display:none"></div>
+    <div class="v-body" id="v-body"></div>
+  </div>
+</div>
+<div class="wrap">
+<nav id="nav">
+  <div class="brand">RUN<br>REPORT</div>
+  <div class="sub" id="nav-sub">AGENT RUN</div>
+  <div class="grp">Report</div>
+  <a href="#overview">Overview</a>
+  <a href="#pipeline">Pipeline</a>
+  <a href="#rubrics">Rubric scoreboard</a>
+  <div class="grp">Failures</div>
+  <div id="nav-fails"></div>
+  <div class="grp">Agents</div>
+  <div id="nav-agents"></div>
+  <div class="grp">Context</div>
+  <a href="#concepts">Concept pulls</a>
+  <a href="#sources">Sources &amp; artifacts</a>
+  <a href="#system">System health</a>
+  <a href="#fixes">Improvement queue</a>
+</nav>
+<main>
+
+<section id="overview">
+  <div class="kicker">Run summary</div>
+  <h1 id="h-title">Run report</h1>
+  <p class="lede" id="h-goal"></p>
+  <div class="hero">
+    <div>
+      <div class="big"><span id="h-npass"></span><small> / <span id="h-ncrit"></span></small></div>
+      <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:8px;letter-spacing:.1em">RUBRIC CRITERIA PASSED</div>
+    </div>
+    <div>
+      <div class="verdict" id="h-verdict"></div>
+      <p style="color:var(--muted);font-size:13.5px;margin-top:10px;max-width:60ch" id="h-verdict-note"></p>
+      <div class="statrow" id="h-chips"></div>
+    </div>
+  </div>
+  <div class="statgrid" id="h-stats"></div>
+  <div class="panel"><dl class="kv" id="h-config"></dl></div>
+</section>
+
+<section id="pipeline">
+  <div class="kicker">Data flow</div>
+  <h2>Pipeline timeline</h2>
+  <p class="lede" id="p-lede"></p>
+  <div class="gantt-scroll">
+    <div class="gantt" id="gantt"></div>
+    <div class="g-legend" id="g-legend"></div>
+  </div>
+  <div class="panel" style="font-size:13px;color:var(--muted)" id="branch-panel">
+    <b style="color:var(--ink)">Branch decisions:</b>
+    <ul class="plain" style="margin-top:6px" id="branch-list"></ul>
+  </div>
+</section>
+
+<section id="rubrics">
+  <div class="kicker">format_results</div>
+  <h2>Rubric scoreboard</h2>
+  <p class="lede" id="r-lede"></p>
+  <div class="strip" id="strip"></div>
+  <div class="filters" id="rfilters">
+    <button class="fbtn on" data-f="all">All</button>
+    <button class="fbtn" data-f="fail">Failed</button>
+    <button class="fbtn" data-f="pass">Passed</button>
+  </div>
+  <div id="rlist"></div>
+</section>
+
+<section id="failures">
+  <div class="kicker">Root cause</div>
+  <h2>Failure investigations</h2>
+  <p class="lede">Each failed criterion is traced through the pipeline: was the fact in the source documents, did it reach the graph, did the checklist include it, what the drafter did with it, what each verifier saw, and why the judge failed it.</p>
+  <div id="failblocks"></div>
+</section>
+
+<section id="agents">
+  <div class="kicker">send_agent_logs</div>
+  <h2>Agent roster</h2>
+  <p class="lede" id="a-lede"></p>
+  <div id="agentcards"></div>
+</section>
+
+<section id="concepts">
+  <div class="kicker">Concept usage</div>
+  <h2>Concept pulls</h2>
+  <p class="lede">The graph holds a <b>Concept registry</b>: reusable legal knowledge such as document-type templates, drafting tips, and doctrine nodes like <span class="mono">HHI &amp; Merger Guidelines Concentration Analysis</span>. This section lists every concept pull in the run: which agent retrieved it, with which query, and whether it changed the output. Retrieval does not imply use, so each pull was checked for downstream effect.</p>
+  <div class="statgrid" id="c-stats"></div>
+  <div class="panel" id="c-narrative" style="font-size:14px"></div>
+  <h3 style="margin-top:28px">Concept × agent matrix</h3>
+  <div class="panel" style="overflow-x:auto"><table id="c-matrix"></table></div>
+  <h3 style="margin-top:28px">Concepts and the failed rubrics</h3>
+  <div id="c-failrel"></div>
+  <h3 style="margin-top:28px">Per-agent breakdown</h3>
+  <div id="c-agents"></div>
+  <h3 style="margin-top:28px">Registry recommendations</h3>
+  <ul class="fixes" id="c-recs"></ul>
+</section>
+
+<section id="sources">
+  <div class="kicker">Context</div>
+  <h2>Sources &amp; artifacts</h2>
+  <p class="lede" id="s-lede">Documents ingested into graph namespace <span class="mono" id="s-ns"></span>. Click a card to read the full document. Rubric chips across the report open these documents with the matching figures highlighted.</p>
+  <div class="doccards" id="doccards"></div>
+  <div class="panel" style="overflow-x:auto;margin-top:20px"><table id="doctable"></table></div>
+  <h3 style="margin-top:30px">Shared working files</h3>
+  <p style="color:var(--muted);font-size:13.5px;max-width:70ch">Agents shared a scratch directory on the swarm. The files below were rebuilt from the <span class="mono">cat</span>/<span class="mono">sed</span> reads captured in transcripts. Where the 10&nbsp;KB tool-output limit or the 256&nbsp;KB log limit cut a file, the gap is marked inline. Click to read.</p>
+  <div class="doccards" id="wfcards"></div>
+</section>
+
+<section id="system">
+  <div class="kicker">Meta</div>
+  <h2>System health</h2>
+  <div class="statgrid" id="sys-stats"></div>
+  <h3 style="margin-top:26px">Log pipeline notes</h3>
+  <div class="panel" style="font-size:13.5px">
+    <ul class="plain" id="health-list"></ul>
+  </div>
+  <h3 style="margin-top:26px">Secrets in plaintext <span class="badge b-fail">rotate now</span></h3>
+  <div class="panel" style="overflow-x:auto"><table id="sectable"></table></div>
+</section>
+
+<section id="fixes">
+  <div class="kicker">Recursive self-improvement</div>
+  <h2>Improvement queue</h2>
+  <p class="lede">Each item below targets the workflow definition, the agent prompts, the rubric file, or the logging pipeline. Items come from the three failure traces and the system findings.</p>
+  <div id="fixlist"></div>
+</section>
+
+<footer id="footer">Generated by the run-report toolkit · secrets redacted</footer>
+</main>
+</div>
+
+<script id="page-data" type="application/json">__PAGE_DATA__</script>
+<script id="analysis-data" type="application/json">__ANALYSIS__</script>
+<script id="docs-data" type="application/json">__SOURCE_DOCS__</script>
+<script id="wf-data" type="application/json">__WORKFILES__</script>
+<script id="rlinks-data" type="application/json">__RUBRIC_LINKS__</script>
+<script id="concepts-data" type="application/json">__CONCEPTS__</script>
+<script>
+function render(B){
+const DATA = B.page_data;
+const ANALYSIS = B.analysis || {summaries: [], traces: []};
+const DOCS = B.source_docs || [];
+const WORKFILES = B.workfiles || [];
+const RLINKS = B.rubric_links || {};
+const CONCEPTS = B.concepts || {};
+const $ = s => document.querySelector(s);
+const el = (t, c, h) => { const e = document.createElement(t); if (c) e.className = c; if (h !== undefined) e.innerHTML = h; return e; };
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmtDur = s => s == null ? '—' : (s >= 60 ? `${Math.floor(s/60)}m ${String(Math.round(s%60)).padStart(2,'0')}s` : `${Math.round(s)}s`);
+const hms = ts => ts ? ts.slice(11,19) : '—';
+const T = ts => new Date(ts.replace(' ','T')+'Z').getTime()/1000;
+
+/* ---------- markdown-lite ---------- */
+function md(src){
+  let h = esc(src);
+  h = h.replace(/^######? (.*)$/gm,'<h3>$1</h3>').replace(/^#{1,3} (.*)$/gm,'<h2 style="font-size:17px">$1</h2>');
+  h = h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');
+  h = h.replace(/^\s*[-*] (.*)$/gm,'<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, m=>'<ul>'+m+'</ul>');
+  h = h.replace(/^(\d+)\. (.*)$/gm,'<li>$2</li>');
+  h = h.split(/\n{2,}/).map(b => /^<(h|u|l)/.test(b.trim()) ? b : (b.trim()? '<p>'+b.replace(/\n/g,'<br>')+'</p>':'')).join('\n');
+  return h;
+}
+
+/* ---------- tooltip ---------- */
+const tt = $('#tt');
+function bindTip(node, html){
+  node.addEventListener('mousemove', e => { tt.style.display='block'; tt.innerHTML = html;
+    const w = tt.offsetWidth; let x = e.clientX+14; if (x+w > innerWidth-12) x = e.clientX-w-14;
+    tt.style.left = x+'px'; tt.style.top = Math.min(e.clientY+14, innerHeight-tt.offsetHeight-10)+'px'; });
+  node.addEventListener('mouseleave', () => tt.style.display='none');
+}
+
+/* ---------- document viewer ---------- */
+const V = { docs: {}, marks: [], cur: -1 };
+DOCS.forEach(d => V.docs['doc:'+d.id] = {kind: d.kind, title: d.title, file: d.file, html: d.html, note: d.kind==='deliverable' ? 'This is the judged output — fetched back from the S3 upload the pipeline produced.' : null});
+WORKFILES.forEach(w => V.docs['wf:'+w.id] = {kind: 'working file', title: w.title, file: w.path, html: '<pre>'+esc(w.text)+'</pre>', note: w.note});
+function clearMarks(){
+  document.querySelectorAll('#v-body mark').forEach(m => { const p = m.parentNode; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); });
+  V.marks = []; V.cur = -1; $('#v-count').textContent = '';
+}
+function markTerm(root, term){
+  if (!term || term.length < 2) return;
+  const low = term.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(n => {
+    let txt = n.nodeValue, idx = txt.toLowerCase().indexOf(low);
+    if (idx < 0) return;
+    const frag = document.createDocumentFragment();
+    let rest = txt;
+    while (idx >= 0){
+      frag.append(document.createTextNode(rest.slice(0, idx)));
+      const mk = document.createElement('mark'); mk.textContent = rest.slice(idx, idx+term.length);
+      frag.append(mk);
+      rest = rest.slice(idx+term.length);
+      idx = rest.toLowerCase().indexOf(low);
+    }
+    frag.append(document.createTextNode(rest));
+    n.parentNode.replaceChild(frag, n);
+  });
+}
+function collectMarks(){
+  V.marks = [...document.querySelectorAll('#v-body mark')];
+  $('#v-count').textContent = V.marks.length ? `${V.marks.length} matches` : 'no matches';
+  if (V.marks.length){ V.cur = 0; focusMark(); }
+}
+function focusMark(){
+  V.marks.forEach((m,i)=>m.classList.toggle('cur', i===V.cur));
+  if (V.marks[V.cur]) V.marks[V.cur].scrollIntoView({block:'center', behavior:'smooth'});
+  if (V.marks.length) $('#v-count').textContent = `${V.cur+1} / ${V.marks.length}`;
+}
+function openDoc(key, terms){
+  const d = V.docs[key]; if (!d) return;
+  $('#v-kind').textContent = d.kind; $('#v-kind').className = 'v-kind ' + (d.kind==='deliverable'?'s-warn':'');
+  $('#v-title').textContent = d.title;
+  $('#v-note').style.display = d.note ? '' : 'none'; $('#v-note').textContent = d.note || '';
+  $('#v-body').innerHTML = d.html;
+  $('#v-search').value = terms && terms.length ? terms[0] : '';
+  $('#viewer').classList.add('open'); document.body.style.overflow = 'hidden';
+  clearMarks();
+  (terms||[]).forEach(t => markTerm($('#v-body'), t));
+  collectMarks();
+}
+function closeDoc(){ $('#viewer').classList.remove('open'); document.body.style.overflow = ''; }
+$('#v-close').addEventListener('click', closeDoc);
+$('#viewer').addEventListener('click', e => { if (e.target.id === 'viewer') closeDoc(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDoc(); });
+$('#v-search').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  clearMarks(); markTerm($('#v-body'), $('#v-search').value.trim()); collectMarks();
+});
+$('#v-next').addEventListener('click', ()=>{ if(V.marks.length){ V.cur=(V.cur+1)%V.marks.length; focusMark(); }});
+$('#v-prev').addEventListener('click', ()=>{ if(V.marks.length){ V.cur=(V.cur-1+V.marks.length)%V.marks.length; focusMark(); }});
+window.openDoc = openDoc;
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-dockey]');
+  if (!t) return;
+  let terms = [];
+  try { terms = JSON.parse(t.dataset.terms || '[]'); } catch (_){}
+  openDoc(t.dataset.dockey, terms);
+});
+
+/* ---------- overview ---------- */
+const C = DATA.config, S = DATA.score;
+$('#h-title').textContent = C.deliverable || C.task_slug || 'Run report';
+$('#nav-sub').textContent = (C.task_slug || 'agent run').split('/')[0].toUpperCase().slice(0,24);
+$('#h-goal').innerHTML = esc(C.task_goal || '').replace(/`([^`]+)`/g,'<span class="mono" style="color:var(--accent)">$1</span>');
+$('#h-npass').textContent = S.n_passed;
+$('#h-ncrit').textContent = S.n_criteria;
+const nFail = (S.n_criteria || 0) - (S.n_passed || 0);
+if (S.all_pass == null) {
+  $('#h-verdict').innerHTML = `<span class="lamp" style="background:var(--warn)"></span>UNSCORED · no rubric score found in the logs`;
+  $('#h-verdict').style.cssText += ';color:#e0a94f;border-color:rgba(192,127,19,.5);background:rgba(192,127,19,.08);animation:none';
+  $('#h-verdict-note').textContent = 'The score_rubric step output was not found. The report shows structure and transcripts only.';
+} else if (S.all_pass === false) {
+  $('#h-verdict').innerHTML = `<span class="lamp" style="background:var(--fail)"></span>ALL-PASS GATE: FAILED · SCORE ${S.score} / ${S.max_score}`;
+  $('#h-verdict-note').textContent = `Scoring is all-or-nothing: one failed criterion sets the score to ${S.score}. ${nFail} criteria failed. Each one is traced below.`;
+} else {
+  $('#h-verdict').innerHTML = `<span class="lamp" style="background:var(--pass)"></span>ALL CRITERIA PASSED · SCORE ${S.score} / ${S.max_score}`;
+  $('#h-verdict').style.cssText += ';color:#5cc98d;border-color:rgba(47,158,97,.5);background:rgba(47,158,97,.08);animation:none';
+  $('#h-verdict-note').textContent = 'All criteria passed.';
+}
+$('#p-lede').textContent = `The parent workflow ran ${DATA.timeline.length} steps in ${DATA.wall_clock_min} minutes. Each named agent ran as a child project. Click a bar label to open that agent's summary.`;
+$('#a-lede').textContent = `${DATA.agents.length} child agents ran. Transcript stats come from the recovered send_agent_logs / get_agent_logs payloads. ${DATA.log_stats.transcripts_truncated} of ${DATA.log_stats.n_transcripts} transcripts were cut at the log-line size limit, so final answers were recovered separately.`;
+$('#branch-list').innerHTML = (DATA.branches||[]).map(b => `<li class="${/NOTE:/.test(b)?'anom':''}"><span class="mono">${esc(b)}</span></li>`).join('') || '<li>No branch steps found.</li>';
+if (!(DATA.branches||[]).length) $('#branch-panel').style.display='none';
+$('#health-list').innerHTML = (DATA.health_notes||[]).map(h => `<li class="anom">${esc(h)}</li>`).join('');
+$('#r-lede').textContent = `Judge ${S.judge_model||'?'} scored the final deliverable against ${S.n_criteria} criteria. ${S.n_passed} passed, ${(S.n_criteria||0) - (S.n_passed||0)} failed.`;
+$('#s-ns').textContent = C.task_slug;
+const totTools = DATA.agents.reduce((a,x)=>a+Object.values(x.tools).reduce((p,q)=>p+q,0),0);
+[[`${DATA.wall_clock_min} min`,'wall clock'],[DATA.agents.length,'agents'],[totTools,'agent tool calls'],[DATA.documents.length,'source documents'],[DATA.log_stats.total_lines.toLocaleString(),'log lines analyzed']]
+  .forEach(([n,l]) => $('#h-stats').append(el('div','stat',`<div class="num">${n}</div><div class="l">${l}</div>`)));
+const cfgRows = [['task', C.task_slug],['deliverable', C.deliverable],['graph', C.graph_base_url]];
+Object.entries(C.models||{}).forEach(([k,v]) => cfgRows.push([k.replace(/_/g,' '), v]));
+cfgRows.push(['flags', Object.entries(C.flags||{}).map(([k,v])=>`${k}=${v}`).join(' · ')]);
+cfgRows.filter(([,v])=>v).forEach(([k,v]) => { $('#h-config').append(el('dt',null,esc(k)), el('dd', k==='flags'?'mono':'', esc(v))); });
+$('#h-chips').append(el('span','chip',`judge <b>${esc(S.judge_model||'?')}</b>`));
+
+/* ---------- gantt ---------- */
+const PHASE = {};
+'set_var build_checklist_messages check_documents build_checklist_body guard_missing_docs build_namespace_body call_checklist_llm register_namespace foreach_ingest_doc parse_checklist extract_swarm_slug flag_spreadsheet_sources'.split(' ').forEach(s=>PHASE[s]='setup');
+'write_checklist_to_file guard_cross_checker run_cross_check_agent guard_case_law run_case_law_research'.split(' ').forEach(s=>PHASE[s]='context');
+'derive_basename build_drafter_plan set_drafter_plan run_draft'.split(' ').forEach(s=>PHASE[s]='draft');
+'verify_completeness verify_correctness verify_arithmetic verify_doctrine run_aggregator'.split(' ').forEach(s=>PHASE[s]='verify');
+'foreach_fetch_deliverable assemble_output_map validate_deliverable_names build_score_rubric_attrs score_rubric format_results build_webhook_body if_no_webhook_url post_result set_output guard_all_pass'.split(' ').forEach(s=>PHASE[s]='score');
+const PH_COLOR = {setup:'var(--ph-setup)',context:'var(--ph-context)',draft:'var(--ph-draft)',verify:'var(--ph-verify)',score:'var(--ph-score)'};
+const PH_NAME = {setup:'Setup & ingest',context:'Checklist & research',draft:'Draft',verify:'Verify & aggregate',score:'Score & deliver'};
+const AGENT_STEP = {}; DATA.agents.forEach(a => AGENT_STEP[a.step] = a.name);
+const tl = DATA.timeline.filter(t => t.start && t.end);
+const t0 = Math.min(...tl.map(t=>T(t.start))), t1 = Math.max(...tl.map(t=>T(t.end)));
+const G = $('#gantt'); const W = 980 - 236 - 20; const px = s => (s - t0) / (t1 - t0) * W;
+const axis = el('div','g-axis');
+for (let m = Math.ceil(t0/600)*600; m < t1; m += 600){
+  const tick = el('div','g-tick',`<span>${new Date(m*1000).toISOString().slice(11,16)}</span>`);
+  tick.style.left = px(m)+'px'; axis.append(tick);
+}
+G.append(axis);
+tl.forEach(t => {
+  const row = el('div','g-row');
+  const agent = AGENT_STEP[t.step];
+  const lbl = el('div','g-label', agent ? `<a href="#agent-${agent}">${esc(t.step)} ⇢</a>` : esc(t.step));
+  const bar = el('div','g-bar');
+  bar.style.left = px(T(t.start))+'px';
+  bar.style.width = Math.max(3, px(T(t.end)) - px(T(t.start)))+'px';
+  bar.style.background = PH_COLOR[PHASE[t.step]] || 'var(--faint)';
+  bindTip(bar, `<b>${esc(t.step)}</b><br><span class="d">${hms(t.start)} → ${hms(t.end)} · ${fmtDur(t.duration_s)}${agent? '<br>agent: '+agent:''}</span>`);
+  row.append(lbl, bar); G.append(row);
+});
+Object.entries(PH_NAME).forEach(([k,n]) => $('#g-legend').append(el('span',null,`<i style="background:${PH_COLOR[k]}"></i>${n}`)));
+
+/* ---------- rubric strip + list ---------- */
+const strip = $('#strip'), rlist = $('#rlist');
+DATA.rubrics.forEach(r => {
+  const c = el('div','cell '+r.verdict, `<div class="g">${r.verdict==='pass'?'✓':'✕'}</div><div class="id">${r.id}</div>`);
+  bindTip(c, `<b>${r.id}</b> — ${r.verdict.toUpperCase()}<br><span class="d">${esc(r.title)}</span>`);
+  c.addEventListener('click', () => { location.hash = ''; document.getElementById('rubric-'+r.id).scrollIntoView({behavior:'smooth'});
+    const d = document.getElementById('rubric-'+r.id); d.open = true; });
+  strip.append(c);
+  const item = el('details','rubric-item'); item.id = 'rubric-'+r.id; item.dataset.v = r.verdict;
+  const hits = RLINKS[r.id] || [];
+  const chips = hits.map((h, hi) => {
+    const d = DOCS.find(x => x.id === h.doc); if (!d) return '';
+    const label = d.kind === 'deliverable' ? 'final deliverable' : h.doc.replace(/-/g,'‑');
+    return `<button class="srcchip" data-dockey="doc:${esc(h.doc)}" data-terms="${esc(JSON.stringify(h.tokens))}">📄 ${esc(label)} · ${h.tokens.slice(0,3).map(esc).join(', ')}</button>`;
+  }).join('');
+  item.innerHTML = `<summary><span class="rid">${r.id}</span><span class="rtitle">${esc(r.title)}</span>
+    <span class="badge ${r.verdict==='pass'?'b-pass':'b-fail'}">${r.verdict}</span></summary>
+    <div class="rbody"><div class="mc">${esc(r.match_criteria)}</div><div><b style="color:var(--ink)">Judge:</b> ${esc(r.reasoning)}</div>
+    ${chips?`<div class="srcchips">${chips}</div>`:''}
+    ${r.verdict==='fail'?`<p style="margin-top:10px"><a href="#fail-${r.id}">→ full pathway trace</a></p>`:''}</div>`;
+  rlist.append(item);
+});
+document.querySelectorAll('#rfilters .fbtn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#rfilters .fbtn').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  document.querySelectorAll('.rubric-item').forEach(i => i.style.display = (b.dataset.f==='all'||i.dataset.v===b.dataset.f)?'':'none');
+}));
+
+/* ---------- failure traces ---------- */
+const ST_ICON = {present:'●',partial:'◐',diverged:'◆',missing:'○','not-applicable':'—'};
+const ST_CLASS = {present:'s-pass',partial:'s-warn',diverged:'s-div',missing:'s-fail','not-applicable':''};
+const CLS_BADGE = {'agent-miss':'b-fail','deliberate-divergence-vs-rubric':'b-div','rubric-flaw':'b-warn','judge-strictness':'b-warn','data-gap':'b-fail','ingestion-gap':'b-fail'};
+function stationLink(name){
+  const n = name.toLowerCase();
+  if (n.includes('source') || n.includes('ingest')) return '#sources';
+  if (n.includes('judge')) return '#rubrics';
+  const ag = DATA.agents.find(a => {
+    const an = a.name.toLowerCase();
+    return an === n || an.includes(n) || n.includes(an) ||
+      n.split(/[^a-z]+/).some(w => w.length > 3 && an.includes(w));
+  });
+  return ag ? '#agent-' + ag.name : null;
+}
+const failWrap = $('#failblocks');
+const rubricById = Object.fromEntries(DATA.rubrics.map(r=>[r.id,r]));
+(ANALYSIS.traces||[]).forEach(tr => {
+  const r = rubricById[tr.rubric_id] || {title:'',reasoning:''};
+  const blk = el('div','fail-block'); blk.id = 'fail-'+tr.rubric_id;
+  $('#nav-fails').append(Object.assign(el('a','sub2',esc(tr.rubric_id)),{href:'#fail-'+encodeURIComponent(tr.rubric_id)}));
+  const rHits = RLINKS[tr.rubric_id] || [];
+  const srcHit = rHits.find(h => h.doc !== 'final-memo');
+  const rTerms = (rHits[0]?.tokens) || [];
+  function stationDoc(name){
+    const n = name.toLowerCase();
+    if (n.includes('source')) return srcHit ? {key:'doc:'+srcHit.doc, terms:srcHit.tokens} : null;
+    if (n.includes('judge')) {
+      const deliv = DOCS.find(d => d.kind === 'deliverable');
+      return deliv ? {key:'doc:'+deliv.id, terms:rTerms} : null;
+    }
+    const wf = WORKFILES.find(w => n.split(/[^a-z]+/).some(word => word.length > 3 && w.path.toLowerCase().includes(word)));
+    return wf ? {key:'wf:'+wf.id, terms:rTerms} : null;
+  }
+  let route = '<div class="route">';
+  tr.pathway.forEach(st => {
+    const link = stationLink(st.station);
+    const dv = stationDoc(st.station);
+    const dotAttrs = dv ? ` style="cursor:pointer" data-dockey="${esc(dv.key)}" data-terms="${esc(JSON.stringify(dv.terms))}" title="open artifact"` : '';
+    route += `<div class="station"><div class="st-dot ${ST_CLASS[st.status]||''}"${dotAttrs}>${ST_ICON[st.status]||'·'}</div>
+      <div class="st-name">${link?`<a href="${link}">${esc(st.station)}</a>`:esc(st.station)}</div>
+      <div class="tip"><b>${esc(st.status)}</b>${dv?' · <span class="d">click dot to open artifact</span>':''}<br><span class="d">${esc(st.evidence||'—')}</span></div></div>`;
+  });
+  route += '</div>';
+  const q = (label, o, extra) => `<div class="qcard"><div class="ql">${label}</div>
+    <div class="qa"><b class="${o.answer.includes('yes')||o.answer==='knowable-explicit'?'s-pass':o.answer.includes('no')||o.answer==='not-knowable'?'s-fail':'s-warn'}">${esc(o.answer)}</b> — ${esc(o.evidence)}</div></div>`;
+  blk.innerHTML = `
+    <div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap">
+      <h3 style="font-size:24px;margin:0">${tr.rubric_id}</h3>
+      <span class="badge ${CLS_BADGE[tr.classification]||'b-mut'}">${esc(tr.classification)}</span>
+    </div>
+    <p style="color:var(--muted);margin-top:6px;font-size:14.5px">${esc(r.title)}</p>
+    <div class="mini-h">Trace — hover a step for evidence. Click a dot to open the artifact. Click a name to open the agent.</div>
+    ${route}
+    <div class="qgrid">
+      ${q('1 · ingested to the graph?', tr.q_ingested_to_graph)}
+      ${q('2 · knowable or derived?', tr.q_knowable_or_derived)}
+      ${q('3 · did the draft get it?', tr.q_draft_got_it)}
+      ${q('4 · did verification get it?', tr.q_verify_got_it)}
+    </div>
+    <div class="rootcause"><b>Root cause:</b> ${esc(tr.root_cause)}</div>
+    <div class="mini-h">Suggested fixes</div>
+    <ul class="fixes">${tr.fix_suggestions.map(f=>`<li>${esc(f)}</li>`).join('')}</ul>`;
+  failWrap.append(blk);
+});
+
+/* ---------- agent cards ---------- */
+const sumByName = {};
+(ANALYSIS.summaries||[]).forEach(s => { sumByName[(s.agent_name||'').toLowerCase()] = s; });
+function findSummary(name){
+  const key = Object.keys(sumByName).find(k => k.includes(name) || name.includes(k) || k.replace(/[^a-z]/g,'').includes(name.replace(/[^a-z]/g,'')));
+  return key ? sumByName[key] : null;
+}
+const cards = $('#agentcards');
+const maxTool = Math.max(...DATA.agents.flatMap(a => Object.values(a.tools)));
+DATA.agents.forEach(a => {
+  const sum = findSummary(a.name) || {};
+  $('#nav-agents').append(Object.assign(el('a','sub2',esc(a.name)),{href:'#agent-'+encodeURIComponent(a.name)}));
+  const card = el('div','agent-card'); card.id = 'agent-'+a.name;
+  const tools = Object.entries(a.tools).map(([t,n]) =>
+    `<div class="tb"><div class="t">${esc(t)}</div><div><div class="bar" style="width:${Math.max(2,n/maxTool*100)}%"></div></div><div class="n">${n}</div></div>`).join('');
+  const files = (sum.files_touched||[]).map(f=>`<li><span class="mono">${esc(f.path)}</span> <span class="badge b-mut">${esc(f.action)}</span> ${esc(f.note)}</li>`).join('');
+  const findings = (sum.key_findings||[]).map(f=>`<li>${esc(f)}</li>`).join('');
+  const anomalies = (sum.anomalies||[]).map(f=>`<li class="anom">${esc(f)}</li>`).join('');
+  const rel = sum.failed_rubric_relevance || [];
+  const relRows = (Array.isArray(rel) ? rel : [])
+    .filter(r => r.note && !/not touched/i.test(r.note))
+    .map(r=>`<li><b style="color:var(--ink)">${esc(r.rubric_id)}:</b> ${esc(r.note)}</li>`).join('');
+  card.innerHTML = `
+    <div class="agent-head">
+      <h3>${esc(a.name)}</h3>
+      <span class="chip">step <b>${esc(a.step)}</b></span>
+      <span class="chip">${hms(a.start)} → ${hms(a.end)} · <b>${fmtDur(a.duration_s)}</b></span>
+      <span class="chip">project <b>${esc(a.project_id)}</b></span>
+      <span class="chip">${a.n_messages} msgs</span>
+      ${a.transcript_truncated?'<span class="badge b-warn">transcript truncated @256KB</span>':'<span class="badge b-pass">complete transcript</span>'}
+    </div>
+    <p style="color:var(--muted);font-size:13.5px;margin-top:10px">${esc(sum.mission||'')}</p>
+    <div class="cols2">
+      <div><div class="mini-h">Tool calls</div><div class="toolbars">${tools}</div>
+        ${files?`<div class="mini-h">Files touched</div><ul class="plain">${files}</ul>`:''}</div>
+      <div>
+        ${sum.context_gathered?`<div class="mini-h">Context gathered</div><p style="font-size:13px;color:var(--muted)">${esc(sum.context_gathered)}</p>`:''}
+        ${findings?`<div class="mini-h">Key findings</div><ul class="plain">${findings}</ul>`:''}
+      </div>
+    </div>
+    ${anomalies?`<div class="mini-h">Anomalies</div><ul class="plain">${anomalies}</ul>`:''}
+    ${relRows?`<div class="mini-h">Notes on the failed rubrics</div><ul class="plain">${relRows}</ul>`:''}
+    <details class="fold"><summary>final answer (recovered from parse_agent_final_answer)</summary><div class="inner md">${md(a.final_answer)}</div></details>`;
+  cards.append(card);
+});
+
+/* ---------- sources ---------- */
+const KIND_LABEL = {docx:'word document', eml:'email chain', xlsx:'spreadsheet', deliverable:'★ final deliverable'};
+const dcWrap = $('#doccards');
+DOCS.forEach(d => {
+  const card = el('div','doccard'+(d.kind==='deliverable'?' deliv':''));
+  card.innerHTML = `<div class="dc-kind ${d.kind==='deliverable'?'s-warn':''}">${KIND_LABEL[d.kind]||d.kind}</div>
+    <div class="dc-title">${esc(d.title)}</div><div class="dc-file">${esc(d.file)}</div>`;
+  card.addEventListener('click', () => openDoc('doc:'+d.id));
+  dcWrap.append(card);
+});
+const wfWrap = $('#wfcards');
+WORKFILES.forEach(w => {
+  const card = el('div','doccard');
+  card.innerHTML = `<div class="dc-kind">working file · ${(w.text.length/1024).toFixed(1)} KB recovered</div>
+    <div class="dc-title mono" style="font-family:var(--mono);font-size:13.5px">${esc(w.title)}</div>
+    <div class="dc-file" style="margin-top:6px;color:var(--muted);font-family:var(--body);font-size:11.5px;line-height:1.5">${esc(w.note)}</div>`;
+  card.addEventListener('click', () => openDoc('wf:'+w.id));
+  wfWrap.append(card);
+});
+$('#doctable').innerHTML = `<tr><th>document</th><th>parse strategy</th><th>graph ref</th><th>status</th><th>window</th></tr>` +
+  DATA.documents.map(d=>{
+    const docId = (d.file||'').replace(/\.(docx|eml|xlsx)$/,'');
+    return `<tr style="cursor:pointer" data-dockey="doc:${esc(docId)}"><td class="mono"><a>${esc(d.file)}</a></td><td class="mono">${esc(d.strategy)}</td>
+    <td class="mono" style="font-size:10.5px">${esc(d.ref_id)}</td>
+    <td>${d.already_exists==='true'?'<span class="badge b-mut">already in graph</span>':'<span class="badge b-pass">created</span>'}</td>
+    <td class="mono">${hms(d.start)}→${hms(d.end)}</td></tr>`;
+  }).join('');
+
+/* ---------- concepts ---------- */
+const CV_BADGE = {'effective':'b-pass','partially-used':'b-warn','ignored':'b-mut','irrelevant-noise':'b-fail'};
+const CV_LABEL = {'effective':'effective','partially-used':'partial','ignored':'ignored','irrelevant-noise':'noise'};
+if (CONCEPTS && CONCEPTS.per_agent && CONCEPTS.per_agent.length){
+  const PA = CONCEPTS.per_agent, SY = CONCEPTS.synthesis || {};
+  const tot = {pulled:0, effective:0, ignored:0, noise:0};
+  PA.forEach(a => { tot.pulled += a.counts.pulled; tot.effective += a.counts.effective; tot.ignored += a.counts.ignored; tot.noise += a.counts.noise; });
+  [[tot.pulled,'concept pulls (incl. dupes)'],[(SY.concept_matrix||[]).length,'distinct concepts'],[tot.effective,'rated effective'],[tot.ignored,'retrieved then ignored'],[tot.noise,'irrelevant noise']]
+    .forEach(([n,l]) => $('#c-stats').append(el('div','stat',`<div class="num">${n}</div><div class="l">${l}</div>`)));
+  $('#c-narrative').innerHTML = `<b style="color:var(--ink)">Verdict:</b> ${esc(SY.overall_narrative||'')}`;
+  $('#c-matrix').innerHTML = `<tr><th>concept</th><th>pulled by</th><th>verdict</th><th>what it contributed</th></tr>` +
+    (SY.concept_matrix||[]).map(r => `<tr>
+      <td style="min-width:200px"><b>${esc(r.concept)}</b></td>
+      <td>${(r.agents||[]).map(a=>{const id=DATA.agents.find(x=>a.toLowerCase().includes(x.name)||x.name.includes(a.toLowerCase()));return id?`<a class="chip" style="margin:1px 2px" href="#agent-${id.name}">${esc(a)}</a>`:`<span class="chip" style="margin:1px 2px">${esc(a)}</span>`;}).join('')}</td>
+      <td><span class="badge ${CV_BADGE[r.verdict]||'b-mut'}">${CV_LABEL[r.verdict]||esc(r.verdict)}</span></td>
+      <td style="color:var(--muted);font-size:12.5px">${esc(r.note)}</td></tr>`).join('');
+  const fr = $('#c-failrel');
+  (SY.relation_to_failures||[]).forEach(r => {
+    fr.append(el('div','panel',`<a class="badge b-fail" style="margin-right:10px" href="#fail-${esc(r.rubric_id)}">${esc(r.rubric_id)}</a> <span style="font-size:13.5px">${esc(r.finding)}</span>`));
+  });
+  const ca = $('#c-agents');
+  PA.forEach(a => {
+    const key = (a.agent_name||'').toLowerCase().replace(/[^a-z-]/g,'');
+    const match = DATA.agents.find(x => key.includes(x.name) || x.name.includes(key));
+    const pulls = (a.pulled||[]).map(p => `
+      <div style="border-top:1px solid var(--line);padding:9px 0">
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <b style="font-size:13px">${esc(p.name)}</b>
+          <span class="chip">${esc(p.node_type)}</span>
+          <span class="badge ${CV_BADGE[p.verdict]||'b-mut'}">${CV_LABEL[p.verdict]||esc(p.verdict)}</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:3px">via ${esc(p.how)}</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:4px"><b style="color:var(--ink)">content:</b> ${esc(p.content_gist)}</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:3px"><b style="color:var(--ink)">applied:</b> ${esc(p.applied)}</div>
+      </div>`).join('');
+    const missed = (a.missed_opportunities||[]).map(m=>`<li class="anom">${esc(m)}</li>`).join('');
+    const item = el('details','rubric-item');
+    item.innerHTML = `<summary>
+        <span class="rid" style="min-width:0">${match?`<a href="#agent-${match.name}" onclick="event.stopPropagation()">${esc(a.agent_name)}</a>`:esc(a.agent_name)}</span>
+        <span class="rtitle" style="color:var(--muted);font-size:12.5px">${a.counts.pulled} pulled · ${a.counts.effective} effective · ${a.counts.ignored} ignored · ${a.counts.noise} noise</span>
+        <span class="badge ${a.counts.pulled===0?'b-mut':a.counts.effective>0?'b-pass':'b-warn'}">${a.counts.pulled===0?'no pulls':a.counts.effective>0?'used':'unused'}</span></summary>
+      <div class="rbody" style="padding-left:14px">
+        <p style="font-size:13px;color:var(--muted)">${esc(a.overall_assessment)}</p>
+        ${pulls}
+        ${missed?`<div class="mini-h">Missed opportunities</div><ul class="plain">${missed}</ul>`:''}
+      </div>`;
+    ca.append(item);
+  });
+  $('#c-recs').innerHTML = (SY.recommendations||[]).map(r=>`<li>${esc(r)}</li>`).join('');
+} else {
+  document.getElementById('concepts').style.display = 'none';
+}
+
+/* ---------- system ---------- */
+const LS = DATA.log_stats;
+[[LS.total_lines.toLocaleString(),'log lines'],[LS.projects.toLocaleString(),'workflow projects'],
+ [LS.noise_projects.toLocaleString(),'noise projects (dropped)'],[LS.transcripts_truncated+' / '+LS.n_transcripts,'transcripts truncated'],
+ [DATA.security.length,'secret exposures']]
+ .forEach(([n,l]) => $('#sys-stats').append(el('div','stat',`<div class="num">${n}</div><div class="l">${l}</div>`)));
+$('#sectable').innerHTML = `<tr><th>what</th><th>where</th><th>severity</th><th>action</th></tr>` +
+  DATA.security.map(s=>`<tr><td><b>${esc(s.kind)}</b></td><td class="mono" style="font-size:11px">${esc(s.where)}</td>
+  <td class="mono sev-${s.severity}">${s.severity.toUpperCase()}</td><td style="color:var(--muted)">${esc(s.detail)}</td></tr>`).join('');
+
+/* ---------- fixes ---------- */
+const fixWrap = $('#fixlist');
+const sysFixes = (DATA.health_notes||[]).map(h => ['system', h])
+  .concat((DATA.security||[]).length ? [['security','Rotate the credentials listed in System health and mask resolved secrets before logging step attributes.']] : []);
+(ANALYSIS.traces||[]).forEach(tr => tr.fix_suggestions.forEach(f => {
+  fixWrap.append(el('div','panel',`<span class="badge ${CLS_BADGE[tr.classification]||'b-mut'}" style="margin-right:10px">${tr.rubric_id}</span> ${esc(f)}`));
+}));
+sysFixes.forEach(([tag,f]) => fixWrap.append(el('div','panel',`<span class="badge b-warn" style="margin-right:10px">${tag}</span> ${esc(f)}`)));
+
+/* ---------- nav highlight ---------- */
+const secs = [...document.querySelectorAll('section')];
+const navLinks = [...document.querySelectorAll('nav a')];
+addEventListener('scroll', () => {
+  let cur = secs[0].id;
+  for (const s of secs) if (s.getBoundingClientRect().top < 130) cur = s.id;
+  navLinks.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#'+cur));
+}, {passive:true});
+} /* end render() */
+
+/* Bootstrap: baked mode (data inlined in script tags) or viewer mode (?data=<url>). */
+(async () => {
+  const readTag = id => document.getElementById(id).textContent.trim();
+  const inline = readTag('page-data');
+  if (inline.startsWith('{')) {
+    render({
+      page_data: JSON.parse(inline),
+      analysis: JSON.parse(readTag('analysis-data') || '{}'),
+      source_docs: JSON.parse(readTag('docs-data') || '[]'),
+      workfiles: JSON.parse(readTag('wf-data') || '[]'),
+      rubric_links: JSON.parse(readTag('rlinks-data') || '{}'),
+      concepts: JSON.parse(readTag('concepts-data') || '{}'),
+    });
+    return;
+  }
+  const fail = msg => { document.querySelector('main').innerHTML =
+    `<section><h2>Cannot load report</h2><p style="font-family:var(--mono);color:var(--muted);margin-top:12px">${msg}</p></section>`; };
+  const url = new URLSearchParams(location.search).get('data');
+  if (!url) { fail('Open this viewer with ?data=&lt;url of report-data.json&gt;'); return; }
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) { fail(`Fetch failed: HTTP ${resp.status} for ${url.replace(/[<>&]/g,'')}`); return; }
+    const b = await resp.json();
+    if (!b.page_data) { fail('report-data.json has no page_data key (wrong file or schema)'); return; }
+    if ((b.schema_version || 1) > 1) { fail(`report schema_version ${b.schema_version} is newer than this viewer supports`); }
+    render(b);
+  } catch (e) { fail('Could not fetch or parse report data: ' + String(e).replace(/[<>&]/g,'')); }
+})();
+</script>
+</body>
+</html>

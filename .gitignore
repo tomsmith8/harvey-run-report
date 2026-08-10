@@ -1,0 +1,23 @@
+# Run outputs — derived from customer log exports. Never commit.
+out/
+*.zip
+logs.json
+
+# Anything that looks like a log export or an analysis artifact
+page-data.json
+analysis.json
+concepts-analysis.json
+extracted/
+source-docs/
+dump/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
