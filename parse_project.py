@@ -28,6 +28,69 @@ def ts_str(epoch_ms):
     return dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
 
+def iso_ms(s):
+    if not s:
+        return None
+    return int(datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp() * 1000)
+
+
+def normalize_v3(tree):
+    """Fold the list-based export shape into the dict-based one.
+
+    v3: {project_id, name, child_name, workflow_id, workflow_state, created_at,
+         updated_at, output, steps: [{name, skill, workflow_state, has_output,
+         output, inputs, prompt_resolutions}], children: [same, recursive]}
+
+    Differences handled here: steps are a list keyed by 'name' and carry no
+    timestamps; children hang off the project with the launching step alias
+    encoded as a suffix of child_name; grandchildren are progress-ping noise
+    and are dropped.
+    """
+    root_name = tree.get('name') or ''
+    steps = {}
+    for s in tree.get('steps') or []:
+        steps[s['name']] = {
+            'skill': s.get('skill'),
+            'status': s.get('workflow_state'),
+            'time_start': None, 'time_end': None,
+            'inputs': s.get('inputs') or {},
+            'outputs': s.get('output') or {},
+            'children': [],
+        }
+    noise_skipped = 0
+    for c in tree.get('children') or []:
+        cn = c.get('child_name') or ''
+        alias = cn[len(root_name) + 1:] if root_name and cn.startswith(root_name + '_') else None
+        noise_skipped += len(c.get('children') or [])
+        if not alias or alias not in steps:
+            continue
+        child = {
+            'pid': c.get('project_id'), 'wid': c.get('workflow_id'),
+            'name': cn, 'status': c.get('workflow_state'),
+            'time_start': iso_ms(c.get('created_at')), 'time_end': iso_ms(c.get('updated_at')),
+            'steps': {s['name']: {'skill': s.get('skill'), 'status': s.get('workflow_state'),
+                                  'inputs': s.get('inputs') or {}, 'outputs': s.get('output') or {}}
+                      for s in c.get('steps') or []},
+        }
+        st = steps[alias]
+        st['children'].append(child)
+        # backfill launch-step timing from its children's project windows
+        starts = [t for t in (st['time_start'], child['time_start']) if t]
+        ends = [t for t in (st['time_end'], child['time_end']) if t]
+        st['time_start'] = min(starts) if starts else None
+        st['time_end'] = max(ends) if ends else None
+    return {
+        'pid': tree.get('project_id'), 'wid': tree.get('workflow_id'),
+        'name': root_name, 'status': tree.get('workflow_state'),
+        'time_start': iso_ms(tree.get('created_at')), 'time_end': iso_ms(tree.get('updated_at')),
+        'steps': steps,
+        'stats': {'projects': 1 + len(tree.get('children') or []),
+                  'steps': sum(1 for _ in tree.get('steps') or []) +
+                           sum(len(c.get('steps') or []) for c in tree.get('children') or []),
+                  'noise_children_skipped': noise_skipped},
+    }
+
+
 def step_result(step):
     """A step's primary output payload: outputs.output, unwrapping {results: ...}."""
     out = (step.get('outputs') or {}).get('output')
@@ -179,6 +242,9 @@ def main():
         print(f'redacted {n} secret-shaped spans ({len(values)} distinct values)')
 
     tree = json.loads(raw_text)
+    if isinstance(tree.get('steps'), list):
+        print('detected list-based export shape; normalizing')
+        tree = normalize_v3(tree)
     steps = tree.get('steps') or {}
     if not steps:
         raise SystemExit('No steps found - is this the project-tree export shape?')
@@ -204,14 +270,15 @@ def main():
 
     # timeline + branches
     timeline, branches = [], []
-    for alias, step in sorted(steps.items(), key=lambda kv: kv[1].get('time_start') or 0):
+    # both export shapes list steps in pipeline order - keep it
+    for alias, step in steps.items():
         dur = None
         if step.get('time_start') and step.get('time_end'):
             dur = (step['time_end'] - step['time_start']) / 1000
         timeline.append({'step': alias, 'start': ts_str(step.get('time_start')),
                          'end': ts_str(step.get('time_end')), 'duration_s': dur})
-        if step.get('skill') == 'IfElseCondition':
-            inp = step.get('inputs') or {}
+        inp = step.get('inputs') or {}
+        if step.get('skill') == 'IfElseCondition' or 'else_statement' in inp or 'condition_groups' in inp:
             note = (f"{alias} - then: {inp.get('statement') or '(next step)'}, "
                     f"else: {inp.get('else_statement') or '(next step)'}")
             branches.append(note)
