@@ -748,10 +748,15 @@ def parse_export(raw_text):
     # Ingestion children are workers too: no transcript, but a real unit of work
     # per document. Represent them as agents (kind='ingest') so they appear in
     # the roster and on the gantt alongside the transcript agents.
+    transcript_pids = {tr["project_id"] for tr in transcripts}
     for alias, kids in children_by_alias.items():
         for c in kids:
             csteps, _ = steps_by_name(c)
             if "parse_document" not in csteps:
+                continue
+            # a child that ALSO emitted send_agent_logs is already a full
+            # transcript agent above - do not list it twice
+            if str(c.get("project_id") or "") in transcript_pids:
                 continue
             sv = step_result(csteps.get("set_var", {})) or {}
             sv = sv if isinstance(sv, dict) else {}
