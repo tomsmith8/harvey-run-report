@@ -110,7 +110,59 @@ def empty_synthesis():
             "relation_to_failures": [], "recommendations": []}
 
 
-def load_phase_array(raw_value, label, warnings):
+def normalize_phase_items(items, label, warnings):
+    """Keep only bare phase objects; wrapper records are rejected, not adapted.
+
+    A mis-wired fan-out collection contains runner envelopes
+    ({agent_name, status, result, error}) or fetch-step file pointers
+    ({filename, text: <url>}) instead of the model replies. Those mean the
+    WORKFLOW collected the wrong variable - this script reports the exact
+    violation and refuses the records, so the fix lands in the workflow,
+    never here.
+    """
+    bare, envelopes, pointers = [], 0, 0
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if set(it.keys()) <= {"filename", "text"} and str(it.get("text") or "").startswith("http"):
+            pointers += 1
+            continue
+        if "result" in it and ("status" in it or "error" in it):
+            envelopes += 1
+            continue
+        bare.append(it)
+    if envelopes:
+        warnings.append(f"{label}: {envelopes} runner-envelope record(s) "
+                        "({agent_name,status,result,error}) rejected - the workflow "
+                        "collected the runner reply wrapper; collect each iteration's "
+                        "parsed `result` payload instead")
+    if pointers:
+        warnings.append(f"{label}: {pointers} file-pointer record(s) ({{filename,text}}) "
+                        "rejected - a fetch/load step's own output leaked into the "
+                        "phase collection")
+    return bare
+
+
+def drop_blank_items(items, fields, label, warnings):
+    """Drop items whose content fields are all blank (e.g. empty schema echoes
+    from a prompt that received no input), then dedupe by agent_name."""
+    kept, seen = [], set()
+    for it in items:
+        if not any(not _is_blank(it.get(f)) for f in fields):
+            continue
+        name = it.get("agent_name")
+        if name and name in seen:
+            continue
+        if name:
+            seen.add(name)
+        kept.append(it)
+    n = len(items) - len(kept)
+    if n:
+        warnings.append(f"{label}: {n} blank/duplicate item(s) dropped")
+    return kept
+
+
+def load_phase_array(raw_value, label, warnings, content_fields=None):
     if raw_value is None:
         warnings.append(f"{label}: no content supplied; using empty shape")
         return [], False
@@ -127,6 +179,9 @@ def load_phase_array(raw_value, label, warnings):
     if not isinstance(parsed, list):
         warnings.append(f"{label}: content was not an array/object; using empty shape")
         return [], False
+    parsed = normalize_phase_items(parsed, label, warnings)
+    if content_fields:
+        parsed = drop_blank_items(parsed, content_fields, label, warnings)
     return parsed, True
 
 
@@ -139,8 +194,13 @@ def load_phase_object(raw_value, label, warnings):
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"{label}: failed to resolve content ({exc}); using empty shape")
         return empty_synthesis(), False
-    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
-        parsed = parsed[0]
+    if isinstance(parsed, list):
+        parsed = normalize_phase_items(parsed, label, warnings)
+        parsed = parsed[0] if len(parsed) >= 1 and isinstance(parsed[0], dict) else None
+    if isinstance(parsed, dict) and "result" in parsed and ("status" in parsed or "error" in parsed):
+        warnings.append(f"{label}: got a runner-envelope record, not the reply object - "
+                        "the workflow must pass the parsed `result` payload")
+        parsed = None
     if not isinstance(parsed, dict):
         warnings.append(f"{label}: content was not an object; using empty shape")
         return empty_synthesis(), False
@@ -233,19 +293,22 @@ def build_report_data(page_data_raw, run_llm, traces_raw, summaries_raw,
         phases_skipped = ["rubric-trace", "transcript-summary", "concept-audit", "concept-synthesis"]
         warnings.append("run_llm=false; all four analysis phases deliberately skipped")
     else:
-        traces, ok_t = load_phase_array(traces_raw, "rubric-trace", warnings)
+        traces, ok_t = load_phase_array(traces_raw, "rubric-trace", warnings,
+                                        ["root_cause", "classification"])
         if ok_t and all_blank(traces, ["root_cause"]):
             ok_t = False
             warnings.append("rubric-trace: parsed but every element has a blank root_cause")
         (phases_run if ok_t else phases_failed).append("rubric-trace")
 
-        summaries, ok_s = load_phase_array(summaries_raw, "transcript-summary", warnings)
+        summaries, ok_s = load_phase_array(summaries_raw, "transcript-summary", warnings,
+                                           ["mission", "context_gathered"])
         if ok_s and all_blank(summaries, ["mission", "context_gathered"]):
             ok_s = False
             warnings.append("transcript-summary: parsed but every element is blank")
         (phases_run if ok_s else phases_failed).append("transcript-summary")
 
-        per_agent, ok_a = load_phase_array(audit_raw, "concept-audit", warnings)
+        per_agent, ok_a = load_phase_array(audit_raw, "concept-audit", warnings,
+                                           ["overall_assessment"])
         if ok_a and all_blank(per_agent, ["overall_assessment"]):
             ok_a = False
             warnings.append("concept-audit: parsed but every element is blank")
@@ -256,6 +319,17 @@ def build_report_data(page_data_raw, run_llm, traces_raw, summaries_raw,
             ok_y = False
             warnings.append("concept-synthesis: parsed but overall_narrative is blank")
         (phases_run if ok_y else phases_failed).append("concept-synthesis")
+
+        # a failed phase publishes EMPTY, never junk - Hive falls back to its
+        # deterministic rendering instead of drawing wrapper records
+        if not ok_t:
+            traces = []
+        if not ok_s:
+            summaries = []
+        if not ok_a:
+            per_agent = []
+        if not ok_y:
+            synthesis = empty_synthesis()
 
     published = dict(page_data)
 
