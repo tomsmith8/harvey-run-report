@@ -335,8 +335,17 @@ def _short_name(path):
     return path
 
 
+_HEREDOC_WRITE = re.compile(
+    r"(?:cat|tee)\s*>{1,2}\s*([\w./-]+)\s*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\2",
+    re.DOTALL)
+_ECHO_WRITE = re.compile(
+    r"""(?:echo(?:\s+-[neE]+)?|printf)\s+(?:['\"]%s\\?n?['\"]\s+)?(['\"])(.*?)\1\s*>\s*([\w./-]+)""",
+    re.DOTALL)
+
+
 def stitch_workfiles(transcripts):
     slots = {}
+    written = set()   # files whose full content came from a write - kept at any size
 
     def put(f, n, ln, prio):
         slot = slots.setdefault(f, {})
@@ -354,7 +363,22 @@ def stitch_workfiles(transcripts):
                     continue
                 inp = part.get("input", part.get("args", {}))
                 cmd = inp.get("command", "") if isinstance(inp, dict) else ""
-                if not cmd or not _SIMPLE_READ.match(cmd):
+                if not cmd:
+                    continue
+                # writes first: heredoc / echo-redirect content is authoritative
+                # (the file body is inline in the command itself), works inside
+                # compound commands, and beats any read of the same lines.
+                for m in _HEREDOC_WRITE.finditer(cmd):
+                    f = _short_name(m.group(1))
+                    written.add(f)
+                    for off, ln in enumerate(m.group(3).split("\n")):
+                        put(f, 1 + off, ln, 4)
+                for m in _ECHO_WRITE.finditer(cmd):
+                    f = _short_name(m.group(3))
+                    written.add(f)
+                    for off, ln in enumerate(m.group(2).split("\n")):
+                        put(f, 1 + off, ln, 4)
+                if not _SIMPLE_READ.match(cmd):
                     continue
                 if i + 1 >= len(msgs) or not isinstance(msgs[i + 1].get("content"), list):
                     continue
@@ -373,7 +397,7 @@ def stitch_workfiles(transcripts):
                     continue
                 gm = re.match(_READ_PREFIX + r"grep -n \"\" ([\w./-]+)(?:\s*\|\s*sed -n '(\d+),(\d+)p')?\s*$", cmd)
                 sm = re.match(_READ_PREFIX + r"sed -n '(\d+),(\d+)p' ([\w./-]+)\s*$", cmd)
-                cm = re.match(_READ_PREFIX + r"cat ([\w./-]+)(?: 2>/dev/null)?\s*$", cmd)
+                cm = re.match(_READ_PREFIX + r"cat ([\w./-]+)(?: 2>(?:/dev/null|&1))?\s*$", cmd)
                 if gm:
                     f = _short_name(gm.group(1))
                     for lm in re.finditer(r"(?:^|\n)(\d+):(.*)", res):
@@ -389,7 +413,7 @@ def stitch_workfiles(transcripts):
 
     out = []
     for f, slot in slots.items():
-        if f.startswith("/tmp/") or len(slot) < 3:
+        if f.startswith("/tmp/") or (len(slot) < 3 and f not in written):
             continue
         ns = sorted(slot)
         parts, prev = [], None
@@ -505,6 +529,82 @@ def build_documents(doc_children):
             "plain": "\n".join(plain_lines),   # internal - stripped by build
             "html": "\n".join(html_parts),     # internal - lifted into source_docs
         })
+    return docs
+
+
+# --------------------------------------------------------------------------- #
+# Final deliverable - fetched from the outputs map and converted with stdlib
+# only (a .docx is a zip containing word/document.xml). Failures degrade to a
+# warning; the report still builds.
+# --------------------------------------------------------------------------- #
+
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MAX_DELIVERABLE_BYTES = 25 * 1024 * 1024
+
+
+def _docx_xml_to_doc(xml_bytes, fname):
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+    body = root.find(_W_NS + "body")
+    if body is None:
+        return None
+    plain, html = [], []
+    for child in body:
+        tag = child.tag
+        if tag == _W_NS + "p":
+            text = "".join(t.text or "" for t in child.iter(_W_NS + "t")).strip()
+            if not text:
+                continue
+            plain.append(text)
+            style_el = child.find(f"{_W_NS}pPr/{_W_NS}pStyle")
+            style = (style_el.get(_W_NS + "val") or "").lower() if style_el is not None else ""
+            if "title" in style or style in ("heading1", "heading 1"):
+                html.append(f"<h2>{_esc(text)}</h2>")
+            elif style.startswith("heading"):
+                html.append(f"<h3>{_esc(text)}</h3>")
+            else:
+                html.append(f"<p>{_esc(text)}</p>")
+        elif tag == _W_NS + "tbl":
+            rows = []
+            for ri, tr_el in enumerate(child.findall(_W_NS + "tr")):
+                cells = []
+                for tc in tr_el.findall(_W_NS + "tc"):
+                    cells.append("".join(t.text or "" for t in tc.iter(_W_NS + "t")).strip())
+                plain.append(" | ".join(cells))
+                tag_c = "th" if ri == 0 else "td"
+                rows.append("<tr>" + "".join(f"<{tag_c}>{_esc(c)}</{tag_c}>" for c in cells) + "</tr>")
+            html.append('<div class="tblwrap"><table>' + "".join(rows) + "</table></div>")
+    return {"plain": "\n".join(plain), "html": "\n".join(html)}
+
+
+def fetch_deliverables(outputs, warnings):
+    import io as _io
+    import zipfile
+    docs = []
+    for fname, url in (outputs or {}).items():
+        if not (isinstance(url, str) and url.startswith("http") and fname.lower().endswith(".docx")):
+            continue
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                body = resp.read(_MAX_DELIVERABLE_BYTES + 1)
+            if len(body) > _MAX_DELIVERABLE_BYTES:
+                warnings.append(f"deliverable {fname}: larger than {_MAX_DELIVERABLE_BYTES} bytes; skipped")
+                continue
+            with zipfile.ZipFile(_io.BytesIO(body)) as zf:
+                converted = _docx_xml_to_doc(zf.read("word/document.xml"), fname)
+            if not converted or not converted["html"].strip():
+                warnings.append(f"deliverable {fname}: no readable content extracted")
+                continue
+            doc_id = "deliverable-" + re.sub(r"\.\w+$", "", fname)
+            docs.append({
+                "id": doc_id, "file": fname,
+                "title": "FINAL DELIVERABLE - " + fname, "kind": "deliverable",
+                "strategy": None, "ref_id": None, "already_exists": None,
+                "start": None, "end": None,
+                "plain": converted["plain"], "html": converted["html"],
+            })
+        except Exception as exc:  # noqa: BLE001 - never fail the report on a fetch
+            warnings.append(f"deliverable {fname}: fetch/convert failed ({exc})")
     return docs
 
 
@@ -690,6 +790,22 @@ def parse_export(raw_text):
         outputs = parse_maybe_json(ao.get("outputs_json")) or {}
     if not isinstance(outputs, dict):
         outputs = {}
+    documents.extend(fetch_deliverables(outputs, warnings))
+
+    # deterministic checklist: the workflow itself carries the full checklist
+    # content; add it as a workfile when the stitcher did not recover one.
+    if not any(w["path"].endswith("checklist.md") for w in workfiles):
+        cc = node_output_result(tree, "set_checklist_content") or \
+             node_output_result(tree, "parse_checklist")
+        if isinstance(cc, dict):
+            cc = cc.get("checklist_content") or cc.get("checklist")
+        if isinstance(cc, str) and cc.strip():
+            workfiles.insert(0, {
+                "name": "checklist.md", "path": "checklist.md",
+                "note": "Content taken from the workflow's own checklist step output "
+                        "(set_checklist_content/parse_checklist).",
+                "text": cc,
+            })
 
     # ---- health notes / stats
     root_cdt, root_udt = iso_to_dt(tree.get("created_at")), iso_to_dt(tree.get("updated_at"))
