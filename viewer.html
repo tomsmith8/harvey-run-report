@@ -538,7 +538,7 @@ const PHASE = {};
 const PH_COLOR = {setup:'var(--ph-setup)',context:'var(--ph-context)',draft:'var(--ph-draft)',verify:'var(--ph-verify)',score:'var(--ph-score)'};
 const PH_NAME = {setup:'Setup & ingest',context:'Checklist & research',draft:'Draft',verify:'Verify & aggregate',score:'Score & deliver'};
 const AGENT_STEP = {}; DATA.agents.forEach(a => AGENT_STEP[a.step] = a.name);
-const tl = DATA.timeline.filter(t => t.start && t.end);
+const tl = DATA.timeline.filter(t => t.start && t.end).sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 const t0 = Math.min(...tl.map(t=>T(t.start))), t1 = Math.max(...tl.map(t=>T(t.end)));
 const G = $('#gantt'); const W = 980 - 236 - 20; const px = s => (s - t0) / (t1 - t0) * W;
 const axis = el('div','g-axis');
@@ -559,6 +559,9 @@ tl.forEach(t => {
   row.append(lbl, bar); G.append(row);
 });
 Object.entries(PH_NAME).forEach(([k,n]) => $('#g-legend').append(el('span',null,`<i style="background:${PH_COLOR[k]}"></i>${n}`)));
+const nUntimed = DATA.timeline.length - tl.length;
+if (nUntimed > 0) $('#g-legend').append(el('span', null,
+  `<span style="color:var(--faint)">${nUntimed} of ${DATA.timeline.length} steps carry no timestamps in this export and are not drawn — timing exists only where a step launched a child project.</span>`));
 
 /* ---------- rubric strip + list ---------- */
 const strip = $('#strip'), rlist = $('#rlist');
@@ -778,6 +781,8 @@ if (CONCEPTS && CONCEPTS.per_agent && CONCEPTS.per_agent.length){
   $('#c-recs').innerHTML = (SY.recommendations||[]).map(r=>`<li>${esc(r)}</li>`).join('');
 } else {
   document.getElementById('concepts').style.display = 'none';
+  const cLink = document.querySelector('nav a[href="#concepts"]');
+  if (cLink) cLink.style.display = 'none';
 }
 
 /* ---------- system ---------- */
