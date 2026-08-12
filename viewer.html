@@ -550,7 +550,9 @@ G.append(axis);
 tl.forEach(t => {
   const row = el('div','g-row');
   const agent = AGENT_STEP[t.step];
-  const lbl = el('div','g-label', agent ? `<a href="#agent-${agent}">${esc(t.step)} ⇢</a>` : esc(t.step));
+  const docMatch = t.doc_id && DOCS.some(d => d.id === t.doc_id);
+  const lbl = el('div','g-label', agent ? `<a href="#agent-${agent}">${esc(t.step)} ⇢</a>`
+    : docMatch ? `<a data-dockey="doc:${esc(t.doc_id)}" style="cursor:pointer">${esc(t.step)} ⇢</a>` : esc(t.step));
   const bar = el('div','g-bar');
   bar.style.left = px(T(t.start))+'px';
   bar.style.width = Math.max(3, px(T(t.end)) - px(T(t.start)))+'px';
