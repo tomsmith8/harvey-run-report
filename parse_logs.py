@@ -135,13 +135,23 @@ def clean_result(res):
     return t
 
 
-def stitch_workfiles(transcripts):
-    """Rebuild shared working files from cat/sed/grep reads captured in transcripts.
+_HEREDOC_WRITE = re.compile(
+    r"(?:cat|tee)\s*>{1,2}\s*([\w./-]+)\s*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\2",
+    re.DOTALL)
+_ECHO_WRITE = re.compile(
+    r"""(?:echo(?:\s+-[neE]+)?|printf)\s+(?:['\"]%s\\?n?['\"]\s+)?(['\"])(.*?)\1\s*>\s*([\w./-]+)""",
+    re.DOTALL)
 
-    Only simple single-read commands are used; sed output is clipped to its line
-    range; grep -n line numbers win over positional guesses.
+
+def stitch_workfiles(transcripts):
+    """Rebuild shared working files from the agents' own reads AND writes.
+
+    Writes (heredoc / echo / printf redirects) carry the file body inline in the
+    command and win over reads; simple single-read commands fill the rest (sed
+    clipped to its range; grep -n line numbers beat positional guesses).
     """
     slots = {}  # fname -> {line_no: (priority, text)}
+    written = set()  # files whose content came from a write - kept at any size
 
     def put(f, n, ln, prio):
         slot = slots.setdefault(f, {})
@@ -159,7 +169,19 @@ def stitch_workfiles(transcripts):
                     continue
                 inp = part.get('input', part.get('args', {}))
                 cmd = inp.get('command', '') if isinstance(inp, dict) else ''
-                if not cmd or not SIMPLE_READ.match(cmd):
+                if not cmd:
+                    continue
+                for m in _HEREDOC_WRITE.finditer(cmd):
+                    f = short_name(m.group(1))
+                    written.add(f)
+                    for off, ln in enumerate(m.group(3).split('\n')):
+                        put(f, 1 + off, ln, 4)
+                for m in _ECHO_WRITE.finditer(cmd):
+                    f = short_name(m.group(3))
+                    written.add(f)
+                    for off, ln in enumerate(m.group(2).split('\n')):
+                        put(f, 1 + off, ln, 4)
+                if not SIMPLE_READ.match(cmd):
                     continue
                 if i + 1 >= len(msgs) or not isinstance(msgs[i + 1].get('content'), list):
                     continue
@@ -181,7 +203,7 @@ def stitch_workfiles(transcripts):
                 prefix = r"^\s*(?:cd [\w./~-]+\s*(?:&&|;)\s*)?"
                 gm = re.match(prefix + r"grep -n \"\" ([\w./-]+)(?:\s*\|\s*sed -n '(\d+),(\d+)p')?\s*$", cmd)
                 sm = re.match(prefix + r"sed -n '(\d+),(\d+)p' ([\w./-]+)\s*$", cmd)
-                cm = re.match(prefix + r"cat ([\w./-]+)(?: 2>/dev/null)?\s*$", cmd)
+                cm = re.match(prefix + r"cat ([\w./-]+)(?: 2>(?:/dev/null|&1))?\s*$", cmd)
                 if gm:
                     f = short_name(gm.group(1))
                     for lm in re.finditer(r'(?:^|\n)(\d+):(.*)', res):
@@ -197,7 +219,7 @@ def stitch_workfiles(transcripts):
 
     out = []
     for f, slot in slots.items():
-        if f.startswith('/tmp/') or len(slot) < 3:
+        if f.startswith('/tmp/') or (len(slot) < 3 and f not in written):
             continue
         ns = sorted(slot)
         parts, prev = [], None
@@ -210,6 +232,7 @@ def stitch_workfiles(transcripts):
         out.append({
             'id': re.sub(r'[^a-z0-9]+', '_', f.lower()).strip('_'),
             'path': f,
+            'name': f,
             'title': f,
             'note': f'Reconstructed from agent transcript reads: {len(ns)} lines recovered '
                     f'(lines {ns[0]}-{ns[-1]}). Gaps from the tool-output or log-line limits are marked inline.',

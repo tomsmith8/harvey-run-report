@@ -513,7 +513,10 @@ if (S.all_pass == null) {
   $('#h-verdict-note').textContent = 'All criteria passed.';
 }
 $('#p-lede').textContent = `The parent workflow ran ${DATA.timeline.length} steps in ${DATA.wall_clock_min} minutes. Each named agent ran as a child project. Click a bar label to open that agent's summary.`;
-$('#a-lede').textContent = `${DATA.agents.length} child agents ran. Transcript stats come from the recovered send_agent_logs / get_agent_logs payloads. ${DATA.log_stats.transcripts_truncated} of ${DATA.log_stats.n_transcripts} transcripts were cut at the log-line size limit, so final answers were recovered separately.`;
+const N_INGEST = DATA.agents.filter(a => a.kind === 'ingest').length;
+$('#a-lede').textContent = `${DATA.agents.length} child agents ran` +
+  (N_INGEST ? ` (${DATA.agents.length - N_INGEST} with transcripts + ${N_INGEST} document-ingestion workers)` : '') +
+  `. Transcript stats come from the recovered send_agent_logs / get_agent_logs payloads. ${DATA.log_stats.transcripts_truncated} of ${DATA.log_stats.n_transcripts} transcripts were cut at the log-line size limit, so final answers were recovered separately.`;
 $('#branch-list').innerHTML = (DATA.branches||[]).map(b => `<li class="${/NOTE:/.test(b)?'anom':''}"><span class="mono">${esc(b)}</span></li>`).join('') || '<li>No branch steps found.</li>';
 if (!(DATA.branches||[]).length) $('#branch-panel').style.display='none';
 $('#health-list').innerHTML = (DATA.health_notes||[]).map(h => `<li class="anom">${esc(h)}</li>`).join('');
@@ -574,6 +577,7 @@ if (nUntimed > 0) $('#g-legend').append(el('span', null,
   `<span style="color:var(--faint)">${nUntimed} of ${DATA.timeline.length} steps carry no timestamps in this export and are not drawn — timing exists only where a step launched a child project.</span>`));
 
 /* ---------- rubric strip + list ---------- */
+const TRACED = new Set((ANALYSIS.traces||[]).map(t => t.rubric_id));
 const strip = $('#strip'), rlist = $('#rlist');
 DATA.rubrics.forEach(r => {
   const c = el('div','cell '+r.verdict, `<div class="g">${r.verdict==='pass'?'✓':'✕'}</div><div class="id">${r.id}</div>`);
@@ -592,7 +596,7 @@ DATA.rubrics.forEach(r => {
     <span class="badge ${r.verdict==='pass'?'b-pass':'b-fail'}">${r.verdict}</span></summary>
     <div class="rbody"><div class="mc">${esc(r.match_criteria)}</div><div><b style="color:var(--ink)">Judge:</b> ${esc(r.reasoning)}</div>
     ${chips?`<div class="srcchips">${chips}</div>`:''}
-    ${r.verdict==='fail'?`<p style="margin-top:10px"><a href="#fail-${r.id}">→ full pathway trace</a></p>`:''}</div>`;
+    ${r.verdict==='fail'&&TRACED.has(r.id)?`<p style="margin-top:10px"><a href="#fail-${r.id}">→ full pathway trace</a></p>`:''}</div>`;
   rlist.append(item);
 });
 document.querySelectorAll('#rfilters .fbtn').forEach(b => b.addEventListener('click', () => {
@@ -665,6 +669,15 @@ const rubricById = Object.fromEntries(DATA.rubrics.map(r=>[r.id,r]));
     <ul class="fixes">${tr.fix_suggestions.map(f=>`<li>${esc(f)}</li>`).join('')}</ul>`;
   failWrap.append(blk);
 });
+// deterministic bundles carry no LLM traces - the sidebar still lists every
+// failed rubric, linking to its scoreboard entry instead of a trace block
+DATA.rubrics.filter(r => r.verdict === 'fail' && !TRACED.has(r.id)).forEach(r => {
+  const a = Object.assign(el('a','sub2', esc(r.id)), {href: '#rubric-' + encodeURIComponent(r.id)});
+  a.addEventListener('click', () => { const d = document.getElementById('rubric-' + r.id); if (d) d.open = true; });
+  $('#nav-fails').append(a);
+});
+if (!$('#nav-fails').children.length)
+  $('#nav-fails').append(el('div','sub2','<span style="color:var(--faint)">none — all criteria passed</span>'));
 
 /* ---------- agent cards ---------- */
 const sumByName = {};
@@ -694,11 +707,11 @@ DATA.agents.forEach(a => {
       <span class="chip">step <b>${esc(a.step)}</b></span>
       <span class="chip">${hms(a.start)} → ${hms(a.end)} · <b>${fmtDur(a.duration_s)}</b></span>
       <span class="chip">project <b>${esc(a.project_id)}</b></span>
-      <span class="chip">${a.n_messages} msgs</span>
+      ${a.n_messages?`<span class="chip">${a.n_messages} msgs</span>`:''}
       ${a.kind==='ingest'?'<span class="badge b-mut">ingestion worker</span>':a.transcript_truncated?'<span class="badge b-warn">transcript truncated @256KB</span>':'<span class="badge b-pass">complete transcript</span>'}
     </div>
     <p style="color:var(--muted);font-size:13.5px;margin-top:10px">${esc(sum.mission||'')}</p>
-    <div class="cols2">
+    ${a.kind==='ingest'&&!a.n_messages?`<div class="mini-h">Ingestion outcome</div><div class="md" style="font-size:13.5px">${md(a.final_answer)}</div>`:`<div class="cols2">
       <div><div class="mini-h">Tool calls</div><div class="toolbars">${tools}</div>
         ${files?`<div class="mini-h">Files touched</div><ul class="plain">${files}</ul>`:''}</div>
       <div>
@@ -708,7 +721,7 @@ DATA.agents.forEach(a => {
     </div>
     ${anomalies?`<div class="mini-h">Anomalies</div><ul class="plain">${anomalies}</ul>`:''}
     ${relRows?`<div class="mini-h">Notes on the failed rubrics</div><ul class="plain">${relRows}</ul>`:''}
-    <details class="fold"><summary>final answer (recovered from parse_agent_final_answer)</summary><div class="inner md">${md(a.final_answer)}</div></details>`;
+    <details class="fold"><summary>final answer (recovered from parse_agent_final_answer)</summary><div class="inner md">${md(a.final_answer)}</div></details>`}`;
   cards.append(card);
 });
 

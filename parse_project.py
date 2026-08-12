@@ -57,21 +57,37 @@ def normalize_v3(tree):
             'outputs': s.get('output') or {},
             'children': [],
         }
+    # progress-ping grandchildren are noise, but agent runners can nest at any
+    # depth (run_judge_dispute -> child_run_dispute_agent; a fresh doc-ingest
+    # launches a swarm runner) - keep every non-ping descendant.
+    PING_STEPS = {'agent_progress', 'set_var', 'set_output', 'wait'}
     noise_skipped = 0
-    for c in tree.get('children') or []:
-        cn = c.get('child_name') or ''
-        alias = cn[len(root_name) + 1:] if root_name and cn.startswith(root_name + '_') else None
-        noise_skipped += len(c.get('children') or [])
-        if not alias or alias not in steps:
-            continue
-        child = {
+
+    def norm_node(c):
+        nonlocal noise_skipped
+        node = {
             'pid': c.get('project_id'), 'wid': c.get('workflow_id'),
-            'name': cn, 'status': c.get('workflow_state'),
+            'name': c.get('child_name') or c.get('name'), 'status': c.get('workflow_state'),
             'time_start': iso_ms(c.get('created_at')), 'time_end': iso_ms(c.get('updated_at')),
             'steps': {s['name']: {'skill': s.get('skill'), 'status': s.get('workflow_state'),
                                   'inputs': s.get('inputs') or {}, 'outputs': s.get('output') or {}}
                       for s in c.get('steps') or []},
+            'children': [],
         }
+        for k in c.get('children') or []:
+            if {s.get('name') for s in k.get('steps') or []} <= PING_STEPS:
+                noise_skipped += 1
+                continue
+            node['children'].append(norm_node(k))
+        return node
+
+    for c in tree.get('children') or []:
+        cn = c.get('child_name') or ''
+        alias = cn[len(root_name) + 1:] if root_name and cn.startswith(root_name + '_') else None
+        if not alias or alias not in steps:
+            noise_skipped += 1
+            continue
+        child = norm_node(c)
         st = steps[alias]
         st['children'].append(child)
         # backfill launch-step timing from its children's project windows
@@ -141,45 +157,71 @@ def scan_report(text):
 # ---------------------------------------------------------------- extraction
 
 def find_agent_children(steps):
-    """WorkflowRunner steps whose child tree contains an agent transcript."""
+    """Agent transcripts anywhere under a root step's child tree.
+
+    Runners can nest (run_judge_dispute launches child_run_dispute_agent; a
+    fresh doc-ingest launches its own swarm runner), so every descendant is
+    checked for send_agent_logs / get_agent_logs. A transcript found under a
+    doc-ingest child is a per-document ingestion agent (kind='ingest').
+    """
+    def descendants(node):
+        yield node
+        for k in node.get('children') or []:
+            yield from descendants(k)
+
     agents = {}
     for alias, step in steps.items():
         for child in step.get('children') or []:
-            ksteps = child.get('steps') or {}
-            sal = ksteps.get('send_agent_logs') or ksteps.get('get_agent_logs')
-            if not sal:
-                continue
-            params = (sal.get('inputs') or {}).get('request_params') or {}
-            msgs = params.get('messages') or []
-            if not msgs:
-                continue
-            name = re.sub(r'^(run_|write_)', '', alias).replace('_', '-')
-            if name in agents:
-                name = f"{name}-{str(child.get('pid'))[-4:]}"
-            final = ''
-            fa_out = ((ksteps.get('parse_agent_final_answer') or {}).get('outputs') or {}).get('output')
-            if isinstance(fa_out, list):
-                strings = [s for s in fa_out if isinstance(s, str)]
-                final = max(strings, key=len) if strings else ''
-            elif isinstance(fa_out, str):
-                final = fa_out
-            if not final:
-                acc = []
-                find_final_answers(ksteps, acc)
-                final = max(acc, key=len) if acc else ''
-            agents[name] = {
-                'project_id': str(child.get('pid', '')),
-                'step': alias,
-                'start': ts_str(child.get('time_start') or step.get('time_start')),
-                'end': ts_str(child.get('time_end') or step.get('time_end')),
-                'duration_s': ((child.get('time_end') or 0) - (child.get('time_start') or 0)) / 1000 or None,
-                'messages': msgs,
-                'truncated': False,
-                'n_messages': len(msgs),
-                'tools': tool_counts(msgs),
-                'final_answer': final,
-                'agent_label': params.get('agent', ''),
-            }
+            tsteps = child.get('steps') or {}
+            is_ingest = 'parse_document' in tsteps
+            fname = ''
+            if is_ingest:
+                csv = step_result(tsteps.get('set_var', {})) or {}
+                furl = csv.get('file_url', '') if isinstance(csv, dict) else ''
+                fname = furl.rsplit('/', 1)[-1].split('?')[0] if furl else str(child.get('pid'))
+            for node in descendants(child):
+                ksteps = node.get('steps') or {}
+                sal = ksteps.get('send_agent_logs') or ksteps.get('get_agent_logs')
+                if not sal:
+                    continue
+                params = (sal.get('inputs') or {}).get('request_params') or {}
+                msgs = params.get('messages') or []
+                if not msgs:
+                    continue
+                if is_ingest:
+                    name, kind = f'ingest: {fname}', 'ingest'
+                else:
+                    name, kind = re.sub(r'^(run_|write_)', '', alias).replace('_', '-'), 'agent'
+                if name in agents:
+                    name = f"{name}-{str(node.get('pid'))[-4:]}"
+                final = ''
+                fa_out = ((ksteps.get('parse_agent_final_answer') or {}).get('outputs') or {}).get('output')
+                if isinstance(fa_out, list):
+                    strings = [s for s in fa_out if isinstance(s, str)]
+                    final = max(strings, key=len) if strings else ''
+                elif isinstance(fa_out, str):
+                    final = fa_out
+                if not final:
+                    acc = []
+                    find_final_answers(ksteps, acc)
+                    final = max(acc, key=len) if acc else ''
+                agents[name] = {
+                    'project_id': str(node.get('pid', '')),
+                    'top_pid': str(child.get('pid', '')),
+                    'step': alias,
+                    'kind': kind,
+                    'start': ts_str(node.get('time_start') or step.get('time_start')),
+                    'end': ts_str(node.get('time_end') or step.get('time_end')),
+                    'duration_s': ((node.get('time_end') or 0) - (node.get('time_start') or 0)) / 1000 or None,
+                    'messages': msgs,
+                    'truncated': False,
+                    'n_messages': len(msgs),
+                    'tools': tool_counts(msgs),
+                    'final_answer': final,
+                    'agent_label': params.get('agent') or (fname if is_ingest else ''),
+                }
+                if is_ingest:
+                    agents[name]['doc_id'] = re.sub(r'\.\w+$', '', fname)
     return agents
 
 
@@ -307,10 +349,53 @@ def main():
     if tree.get('time_start') and tree.get('time_end'):
         wall_min = round((tree['time_end'] - tree['time_start']) / 60000)
 
-    agents_meta = [{k: v for k, v in tr.items() if k != 'messages'} | {'transcript_truncated': tr['truncated']}
+    agents_meta = [{k: v for k, v in tr.items() if k not in ('messages', 'top_pid')}
+                   | {'transcript_truncated': tr['truncated']}
                    for tr in sorted(transcripts.values(), key=lambda t: t['start'] or '')]
     for a, (name, _) in zip(agents_meta, sorted(transcripts.items(), key=lambda kv: kv[1]['start'] or '')):
         a['name'] = name
+
+    # Ingestion children are workers too: no transcript, but a real unit of
+    # work per document. Represent them as agents (kind='ingest') so they show
+    # in the roster and on the gantt alongside the transcript agents.
+    transcript_pids = ({a['project_id'] for a in agents_meta}
+                       | {tr.get('top_pid') for tr in transcripts.values() if tr.get('top_pid')})
+    for alias, step in steps.items():
+        for child in step.get('children') or []:
+            ksteps = child.get('steps') or {}
+            if 'parse_document' not in ksteps:
+                continue
+            # a child whose subtree already produced a transcript agent above
+            # (itself, or a nested swarm runner) must not be listed twice
+            if str(child.get('pid') or '') in transcript_pids:
+                continue
+            csv = step_result(ksteps.get('set_var', {})) or {}
+            csv = csv if isinstance(csv, dict) else {}
+            furl = csv.get('file_url', '')
+            fname = furl.rsplit('/', 1)[-1].split('?')[0] if furl else str(child.get('pid'))
+            strat = step_result(ksteps.get('derive_parse_strategy', {})) or {}
+            ref = step_result(ksteps.get('extract_created_ref_id', {})) or {}
+            pd_res = step_result(ksteps.get('parse_document', {})) or {}
+            els = parse_maybe_json(pd_res.get('elements_json')) if isinstance(pd_res, dict) else None
+            n_els = len(els) if isinstance(els, list) else 0
+            existed = str(ref.get('already_exists')).lower() == 'true' if isinstance(ref, dict) else False
+            outcome = (f"Parsed {fname} with strategy "
+                       f"{strat.get('strategy') if isinstance(strat, dict) else '?'} "
+                       f"into {n_els} element(s); graph node "
+                       f"{(ref.get('ref_id') or '?') if isinstance(ref, dict) else '?'} "
+                       + ('already existed (create skipped).' if existed else 'created.'))
+            dur = None
+            if child.get('time_start') and child.get('time_end'):
+                dur = (child['time_end'] - child['time_start']) / 1000
+            agents_meta.append({
+                'name': f'ingest: {fname}', 'project_id': str(child.get('pid') or ''),
+                'step': alias, 'agent_label': fname,
+                'start': ts_str(child.get('time_start')), 'end': ts_str(child.get('time_end')),
+                'duration_s': dur, 'n_messages': 0, 'tools': {}, 'final_answer': outcome,
+                'truncated': False, 'transcript_truncated': False,
+                'kind': 'ingest', 'doc_id': re.sub(r'\.\w+$', '', fname),
+            })
+    agents_meta.sort(key=lambda a: a.get('start') or '')
 
     stats = tree.get('stats') or {}
     health_notes = ['Transcripts came from the structured project export: no log-line truncation.']

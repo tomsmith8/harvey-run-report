@@ -713,36 +713,62 @@ def parse_export(raw_text):
                  "scored_at": tree.get("updated_at")}
         warnings.append("score derived from merged rubric verdicts (scores_json absent)")
 
-    # ---- agents + transcripts (children of agent-launching steps)
+    # ---- agents + transcripts: send_agent_logs at ANY depth under a root step.
+    # Agent runners can be nested (e.g. run_judge_dispute launches
+    # child_run_dispute_agent; a fresh doc-ingest launches a swarm runner
+    # inside foreach_ingest_doc), so walk each child's whole subtree.
+    def descendants(node):
+        yield node
+        for k in _as_list(node.get("children")):
+            if isinstance(k, dict):
+                yield from descendants(k)
+
     transcripts = []
     used_names = set()
+    ingest_pids_with_transcript = set()  # depth-1 ingest children whose agent ran
     for alias in step_order:
         for child in children_by_alias.get(alias, []):
-            csteps, _ = steps_by_name(child)
-            msgs = extract_messages(csteps)
-            if not msgs:
-                continue
-            name = re.sub(r"^(run_|write_)", "", alias).replace("_", "-")
-            if name in used_names:
-                name = f"{name}-{str(child.get('project_id'))[-4:]}"
-            used_names.add(name)
-            sal_params = _as_dict(_as_dict(_as_dict(csteps.get("send_agent_logs")).get("inputs"))
-                                  .get("request_params"))
-            cdt, udt = iso_to_dt(child.get("created_at")), iso_to_dt(child.get("updated_at"))
-            transcripts.append({
-                "name": name,
-                "project_id": str(child.get("project_id") or ""),
-                "step": alias,
-                "agent_label": sal_params.get("agent") or name,
-                "start": fmt_ts(cdt), "end": fmt_ts(udt), "duration_s": dur_s(cdt, udt),
-                "messages": msgs,
-                "final_answer": extract_final_answer(csteps),
-                "n_messages": len(msgs),
-                "tools": tool_counts(msgs),
-            })
+            top_steps, _ = steps_by_name(child)
+            is_ingest_ctx = "parse_document" in top_steps
+            fname = ""
+            if is_ingest_ctx:
+                sv = step_result(top_steps.get("set_var", {})) or {}
+                furl = sv.get("file_url", "") if isinstance(sv, dict) else ""
+                fname = furl.rsplit("/", 1)[-1].split("?")[0] if furl else str(child.get("project_id"))
+            for node in descendants(child):
+                csteps, _ = steps_by_name(node)
+                msgs = extract_messages(csteps)
+                if not msgs:
+                    continue
+                if is_ingest_ctx:
+                    name, kind = f"ingest: {fname}", "ingest"
+                    ingest_pids_with_transcript.add(str(child.get("project_id") or ""))
+                else:
+                    name, kind = re.sub(r"^(run_|write_)", "", alias).replace("_", "-"), "agent"
+                if name in used_names:
+                    name = f"{name}-{str(node.get('project_id'))[-4:]}"
+                used_names.add(name)
+                sal_params = _as_dict(_as_dict(_as_dict(csteps.get("send_agent_logs")).get("inputs"))
+                                      .get("request_params"))
+                cdt, udt = iso_to_dt(node.get("created_at")), iso_to_dt(node.get("updated_at"))
+                tr = {
+                    "name": name,
+                    "project_id": str(node.get("project_id") or ""),
+                    "step": alias,
+                    "agent_label": sal_params.get("agent") or (fname if is_ingest_ctx else name),
+                    "start": fmt_ts(cdt), "end": fmt_ts(udt), "duration_s": dur_s(cdt, udt),
+                    "messages": msgs,
+                    "final_answer": extract_final_answer(csteps),
+                    "n_messages": len(msgs),
+                    "tools": tool_counts(msgs),
+                    "kind": kind,
+                }
+                if is_ingest_ctx:
+                    tr["doc_id"] = re.sub(r"\.\w+$", "", fname)
+                transcripts.append(tr)
 
     agents_meta = [{k: v for k, v in tr.items() if k != "messages"}
-                   | {"truncated": False, "transcript_truncated": False, "kind": "agent"}
+                   | {"truncated": False, "transcript_truncated": False}
                    for tr in transcripts]
 
     # Ingestion children are workers too: no transcript, but a real unit of work
@@ -754,9 +780,10 @@ def parse_export(raw_text):
             csteps, _ = steps_by_name(c)
             if "parse_document" not in csteps:
                 continue
-            # a child that ALSO emitted send_agent_logs is already a full
-            # transcript agent above - do not list it twice
-            if str(c.get("project_id") or "") in transcript_pids:
+            # a child whose subtree already produced a transcript agent above
+            # (itself, or a nested swarm runner) must not be listed twice
+            cpid = str(c.get("project_id") or "")
+            if cpid in transcript_pids or cpid in ingest_pids_with_transcript:
                 continue
             sv = step_result(csteps.get("set_var", {})) or {}
             sv = sv if isinstance(sv, dict) else {}
