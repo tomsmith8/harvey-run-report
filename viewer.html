@@ -423,8 +423,8 @@ function bindTip(node, html){
 
 /* ---------- document viewer ---------- */
 const V = { docs: {}, marks: [], cur: -1 };
-DOCS.forEach(d => V.docs['doc:'+d.id] = {kind: d.kind, title: d.title, file: d.file, html: d.html, note: d.kind==='deliverable' ? 'This is the judged output — fetched back from the S3 upload the pipeline produced.' : null});
-WORKFILES.forEach(w => V.docs['wf:'+w.id] = {kind: 'working file', title: w.title, file: w.path, html: '<pre>'+esc(w.text)+'</pre>', note: w.note});
+DOCS.forEach(d => V.docs['doc:'+d.id] = {kind: d.kind||'document', title: d.title||d.file||d.id, file: d.file||'', html: d.html, note: d.kind==='deliverable' ? 'This is the judged output — fetched back from the S3 upload the pipeline produced.' : null});
+WORKFILES.forEach(w => V.docs['wf:'+(w.id||w.name||w.path)] = {kind: 'working file', title: w.title||w.name||w.path, file: w.path||w.name||'', html: '<pre>'+esc(w.text)+'</pre>', note: w.note});
 function clearMarks(){
   document.querySelectorAll('#v-body mark').forEach(m => { const p = m.parentNode; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); });
   V.marks = []; V.cur = -1; $('#v-count').textContent = '';
@@ -704,8 +704,8 @@ const KIND_LABEL = {docx:'word document', eml:'email chain', xlsx:'spreadsheet',
 const dcWrap = $('#doccards');
 DOCS.forEach(d => {
   const card = el('div','doccard'+(d.kind==='deliverable'?' deliv':''));
-  card.innerHTML = `<div class="dc-kind ${d.kind==='deliverable'?'s-warn':''}">${KIND_LABEL[d.kind]||d.kind}</div>
-    <div class="dc-title">${esc(d.title)}</div><div class="dc-file">${esc(d.file)}</div>`;
+  card.innerHTML = `<div class="dc-kind ${d.kind==='deliverable'?'s-warn':''}">${KIND_LABEL[d.kind]||esc(d.kind||'document')}</div>
+    <div class="dc-title">${esc(d.title||d.file||d.id)}</div><div class="dc-file">${esc(d.file||'')}</div>`;
   card.addEventListener('click', () => openDoc('doc:'+d.id));
   dcWrap.append(card);
 });
@@ -713,9 +713,9 @@ const wfWrap = $('#wfcards');
 WORKFILES.forEach(w => {
   const card = el('div','doccard');
   card.innerHTML = `<div class="dc-kind">working file · ${(w.text.length/1024).toFixed(1)} KB recovered</div>
-    <div class="dc-title mono" style="font-family:var(--mono);font-size:13.5px">${esc(w.title)}</div>
+    <div class="dc-title mono" style="font-family:var(--mono);font-size:13.5px">${esc(w.title||w.name||w.path)}</div>
     <div class="dc-file" style="margin-top:6px;color:var(--muted);font-family:var(--body);font-size:11.5px;line-height:1.5">${esc(w.note)}</div>`;
-  card.addEventListener('click', () => openDoc('wf:'+w.id));
+  card.addEventListener('click', () => openDoc('wf:'+(w.id||w.name||w.path)));
   wfWrap.append(card);
 });
 $('#doctable').innerHTML = `<tr><th>document</th><th>parse strategy</th><th>graph ref</th><th>status</th><th>window</th></tr>` +
