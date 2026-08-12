@@ -484,7 +484,7 @@ def _esc(t):
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def build_documents(doc_children):
+def build_documents(doc_children, warnings):
     docs, seen_ids = [], set()
     for child in doc_children:
         csteps, _ = steps_by_name(child)
@@ -514,6 +514,14 @@ def build_documents(doc_children):
                 html_parts.append(f"<h3>{_esc(text)}</h3>")
             else:
                 html_parts.append(f"<p>{_esc(text)}</p>")
+
+        if not plain_lines and file_url.startswith("http"):
+            fetched = _fetch_source_doc(file_url, fname, warnings)
+            if fetched and fetched["html"].strip():
+                plain_lines = [fetched["plain"]]
+                html_parts = [fetched["html"]]
+                warnings.append(f"document {fname}: export carried no parse elements; "
+                                "content recovered by downloading the source file")
 
         doc_id = re.sub(r"\.\w+$", "", fname) or str(child.get("project_id"))
         if doc_id in seen_ids:
@@ -575,6 +583,103 @@ def _docx_xml_to_doc(xml_bytes, fname):
                 rows.append("<tr>" + "".join(f"<{tag_c}>{_esc(c)}</{tag_c}>" for c in cells) + "</tr>")
             html.append('<div class="tblwrap"><table>' + "".join(rows) + "</table></div>")
     return {"plain": "\n".join(plain), "html": "\n".join(html)}
+
+
+_XL_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def _xlsx_to_doc(zip_bytes, fname):
+    import io as _io
+    import zipfile
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(_io.BytesIO(zip_bytes)) as zf:
+        shared = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            sroot = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+            for si in sroot.findall(_XL_NS + "si"):
+                shared.append("".join(t.text or "" for t in si.iter(_XL_NS + "t")))
+        plain, html = [], []
+        sheets = sorted(n for n in zf.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n))
+        for sn in sheets:
+            root = ET.fromstring(zf.read(sn))
+            rows_html, first = [], True
+            for row in root.iter(_XL_NS + "row"):
+                cells = []
+                for c in row.findall(_XL_NS + "c"):
+                    ctype = c.get("t")
+                    if ctype == "s":
+                        v = c.find(_XL_NS + "v")
+                        idx = int(v.text) if v is not None and v.text and v.text.isdigit() else -1
+                        cells.append(shared[idx] if 0 <= idx < len(shared) else "")
+                    elif ctype == "inlineStr":
+                        cells.append("".join(t.text or "" for t in c.iter(_XL_NS + "t")))
+                    else:
+                        v = c.find(_XL_NS + "v")
+                        cells.append(v.text if v is not None and v.text else "")
+                if not any(x.strip() for x in cells):
+                    continue
+                plain.append(" | ".join(cells))
+                tc = "th" if first else "td"
+                rows_html.append("<tr>" + "".join(f"<{tc}>{_esc(x)}</{tc}>" for x in cells) + "</tr>")
+                first = False
+            if rows_html:
+                html.append('<div class="tblwrap"><table>' + "".join(rows_html) + "</table></div>")
+    return {"plain": "\n".join(plain), "html": "\n".join(html)}
+
+
+def _eml_to_doc(body_bytes, fname):
+    import email as _email
+    import email.policy as _policy
+    msg = _email.message_from_bytes(body_bytes, policy=_policy.default)
+    body_txt = None
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                body_txt = part.get_content()
+                break
+    else:
+        try:
+            body_txt = msg.get_content()
+        except Exception:  # noqa: BLE001
+            body_txt = None
+    body_txt = body_txt if isinstance(body_txt, str) else ""
+    hdr = f"From: {msg['From']}\nTo: {msg['To']}\nDate: {msg['Date']}\nSubject: {msg['Subject']}"
+    html = ['<div class="emlhdr">' + _esc(hdr).replace("\n", "<br>") + "</div>"]
+    for block in re.split(r"\n{2,}", body_txt):
+        b = block.strip()
+        if b:
+            html.append("<p>" + _esc(b).replace("\n", "<br>") + "</p>")
+    return {"plain": hdr + "\n" + body_txt, "html": "\n".join(html)}
+
+
+def _fetch_source_doc(file_url, fname, warnings):
+    """Download a source document and convert it with stdlib only.
+
+    Fresh-ingest runs may carry no parse_document elements in the export (the
+    real parsing happened in the ingestion agent), so the report recovers the
+    content from the original file - same pattern as the deliverable fetch.
+    """
+    import io as _io
+    import zipfile
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+    if ext not in ("docx", "xlsx", "eml"):
+        warnings.append(f"document {fname}: no parse elements in export and no converter for .{ext}")
+        return None
+    try:
+        with urllib.request.urlopen(file_url, timeout=60) as resp:
+            body = resp.read(_MAX_DELIVERABLE_BYTES + 1)
+        if len(body) > _MAX_DELIVERABLE_BYTES:
+            warnings.append(f"document {fname}: larger than {_MAX_DELIVERABLE_BYTES} bytes; skipped")
+            return None
+        if ext == "docx":
+            with zipfile.ZipFile(_io.BytesIO(body)) as zf:
+                return _docx_xml_to_doc(zf.read("word/document.xml"), fname)
+        if ext == "xlsx":
+            return _xlsx_to_doc(body, fname)
+        return _eml_to_doc(body, fname)
+    except Exception as exc:  # noqa: BLE001 - never fail the report on a fetch
+        warnings.append(f"document {fname}: content fetch/convert failed ({exc})")
+        return None
 
 
 def fetch_deliverables(outputs, warnings):
@@ -821,7 +926,7 @@ def parse_export(raw_text):
             csteps, _ = steps_by_name(c)
             if "parse_document" in csteps:
                 doc_children.append(c)
-    documents = build_documents(doc_children)
+    documents = build_documents(doc_children, warnings)
 
     # ---- timeline: root steps in export order; launch steps get child windows
     timeline = []
