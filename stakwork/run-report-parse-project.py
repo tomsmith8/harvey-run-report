@@ -742,8 +742,42 @@ def parse_export(raw_text):
             })
 
     agents_meta = [{k: v for k, v in tr.items() if k != "messages"}
-                   | {"truncated": False, "transcript_truncated": False}
+                   | {"truncated": False, "transcript_truncated": False, "kind": "agent"}
                    for tr in transcripts]
+
+    # Ingestion children are workers too: no transcript, but a real unit of work
+    # per document. Represent them as agents (kind='ingest') so they appear in
+    # the roster and on the gantt alongside the transcript agents.
+    for alias, kids in children_by_alias.items():
+        for c in kids:
+            csteps, _ = steps_by_name(c)
+            if "parse_document" not in csteps:
+                continue
+            sv = step_result(csteps.get("set_var", {})) or {}
+            sv = sv if isinstance(sv, dict) else {}
+            furl = sv.get("file_url", "")
+            fname = furl.rsplit("/", 1)[-1].split("?")[0] if furl else str(c.get("project_id"))
+            strat = step_result(csteps.get("derive_parse_strategy", {})) or {}
+            ref = step_result(csteps.get("extract_created_ref_id", {})) or {}
+            pd_res = step_result(csteps.get("parse_document", {})) or {}
+            els = parse_maybe_json(pd_res.get("elements_json")) if isinstance(pd_res, dict) else None
+            n_els = len(els) if isinstance(els, list) else 0
+            existed = str(ref.get("already_exists")).lower() == "true" if isinstance(ref, dict) else False
+            outcome = (f"Parsed {fname} with strategy "
+                       f"{strat.get('strategy') if isinstance(strat, dict) else '?'} "
+                       f"into {n_els} element(s); graph node "
+                       f"{(ref.get('ref_id') or '?') if isinstance(ref, dict) else '?'} "
+                       + ("already existed (create skipped)." if existed else "created."))
+            cdt, udt = iso_to_dt(c.get("created_at")), iso_to_dt(c.get("updated_at"))
+            agents_meta.append({
+                "name": f"ingest: {fname}", "project_id": str(c.get("project_id") or ""),
+                "step": alias, "agent_label": fname,
+                "start": fmt_ts(cdt), "end": fmt_ts(udt), "duration_s": dur_s(cdt, udt),
+                "n_messages": 0, "tools": {}, "final_answer": outcome,
+                "truncated": False, "transcript_truncated": False,
+                "kind": "ingest", "doc_id": re.sub(r"\.\w+$", "", fname),
+            })
+    agents_meta.sort(key=lambda a: a.get("start") or "")
 
     workfiles = stitch_workfiles(transcripts)
     concepts_by_agent = extract_concept_pulls(transcripts)
@@ -771,18 +805,6 @@ def parse_export(raw_text):
             end = max(ends) if ends else None
         timeline.append({"step": alias, "start": fmt_ts(start), "end": fmt_ts(end),
                          "duration_s": dur_s(start, end)})
-        # fan-out steps: surface each child project as its own sub-row so the
-        # parallel work is visible (one row per ingested document, labelled by
-        # file and linked to it via doc_id)
-        if alias == "foreach_ingest_doc":
-            for c in kids:
-                csteps, _ = steps_by_name(c)
-                sv = step_result(csteps.get("set_var", {})) or {}
-                furl = sv.get("file_url", "") if isinstance(sv, dict) else ""
-                fname = furl.rsplit("/", 1)[-1].split("?")[0] if furl else str(c.get("project_id"))
-                cdt, udt = iso_to_dt(c.get("created_at")), iso_to_dt(c.get("updated_at"))
-                timeline.append({"step": f"ingest: {fname}", "doc_id": re.sub(r"\.\w+$", "", fname),
-                                 "start": fmt_ts(cdt), "end": fmt_ts(udt), "duration_s": dur_s(cdt, udt)})
 
     # ---- branches as plain strings (Hive narrows to string[])
     branches = []

@@ -537,8 +537,14 @@ const PHASE = {};
 'foreach_fetch_deliverable assemble_output_map validate_deliverable_names build_score_rubric_attrs score_rubric format_results build_webhook_body if_no_webhook_url post_result set_output guard_all_pass'.split(' ').forEach(s=>PHASE[s]='score');
 const PH_COLOR = {setup:'var(--ph-setup)',context:'var(--ph-context)',draft:'var(--ph-draft)',verify:'var(--ph-verify)',score:'var(--ph-score)'};
 const PH_NAME = {setup:'Setup & ingest',context:'Checklist & research',draft:'Draft',verify:'Verify & aggregate',score:'Score & deliver'};
-const AGENT_STEP = {}; DATA.agents.forEach(a => AGENT_STEP[a.step] = a.name);
-const tl = DATA.timeline.filter(t => t.start && t.end).sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+const AGENT_STEP = {}, STEP_AGENT_COUNT = {};
+DATA.agents.forEach(a => { STEP_AGENT_COUNT[a.step] = (STEP_AGENT_COUNT[a.step]||0)+1; });
+DATA.agents.forEach(a => { if (STEP_AGENT_COUNT[a.step] === 1) AGENT_STEP[a.step] = a.name; });
+const fanoutRows = DATA.agents
+  .filter(a => STEP_AGENT_COUNT[a.step] > 1 && a.start && a.end)
+  .map(a => ({step: a.name, start: a.start, end: a.end, duration_s: a.duration_s, fanout: a}));
+const tl = DATA.timeline.filter(t => t.start && t.end).concat(fanoutRows)
+  .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 const t0 = Math.min(...tl.map(t=>T(t.start))), t1 = Math.max(...tl.map(t=>T(t.end)));
 const G = $('#gantt'); const W = 980 - 236 - 20; const px = s => (s - t0) / (t1 - t0) * W;
 const axis = el('div','g-axis');
@@ -550,13 +556,15 @@ G.append(axis);
 tl.forEach(t => {
   const row = el('div','g-row');
   const agent = AGENT_STEP[t.step];
-  const docMatch = t.doc_id && DOCS.some(d => d.id === t.doc_id);
-  const lbl = el('div','g-label', agent ? `<a href="#agent-${agent}">${esc(t.step)} ⇢</a>`
-    : docMatch ? `<a data-dockey="doc:${esc(t.doc_id)}" style="cursor:pointer">${esc(t.step)} ⇢</a>` : esc(t.step));
+  const f = t.fanout;
+  const lbl = el('div','g-label',
+    f && f.doc_id && DOCS.some(d => d.id === f.doc_id) ? `<a data-dockey="doc:${esc(f.doc_id)}" style="cursor:pointer">${esc(t.step)} ⇢</a>`
+    : f ? `<a href="#agent-${encodeURIComponent(f.name)}">${esc(t.step)} ⇢</a>`
+    : agent ? `<a href="#agent-${agent}">${esc(t.step)} ⇢</a>` : esc(t.step));
   const bar = el('div','g-bar');
   bar.style.left = px(T(t.start))+'px';
   bar.style.width = Math.max(3, px(T(t.end)) - px(T(t.start)))+'px';
-  bar.style.background = PH_COLOR[PHASE[t.step]] || 'var(--faint)';
+  bar.style.background = PH_COLOR[PHASE[(t.fanout && t.fanout.step) || t.step]] || 'var(--faint)';
   bindTip(bar, `<b>${esc(t.step)}</b><br><span class="d">${hms(t.start)} → ${hms(t.end)} · ${fmtDur(t.duration_s)}${agent? '<br>agent: '+agent:''}</span>`);
   row.append(lbl, bar); G.append(row);
 });
@@ -687,7 +695,7 @@ DATA.agents.forEach(a => {
       <span class="chip">${hms(a.start)} → ${hms(a.end)} · <b>${fmtDur(a.duration_s)}</b></span>
       <span class="chip">project <b>${esc(a.project_id)}</b></span>
       <span class="chip">${a.n_messages} msgs</span>
-      ${a.transcript_truncated?'<span class="badge b-warn">transcript truncated @256KB</span>':'<span class="badge b-pass">complete transcript</span>'}
+      ${a.kind==='ingest'?'<span class="badge b-mut">ingestion worker</span>':a.transcript_truncated?'<span class="badge b-warn">transcript truncated @256KB</span>':'<span class="badge b-pass">complete transcript</span>'}
     </div>
     <p style="color:var(--muted);font-size:13.5px;margin-top:10px">${esc(sum.mission||'')}</p>
     <div class="cols2">
