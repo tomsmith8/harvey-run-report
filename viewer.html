@@ -836,7 +836,7 @@ addEventListener('scroll', () => {
   const url = new URLSearchParams(location.search).get('data');
   if (!url) { fail('Open this viewer with ?data=&lt;url of report-data.json&gt;'); return; }
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { cache: 'no-store' });  // bundles get overwritten in place (deterministic -> enriched); never serve a stale copy
     if (!resp.ok) { fail(`Fetch failed: HTTP ${resp.status} for ${url.replace(/[<>&]/g,'')}`); return; }
     const b = await resp.json();
     if (!b.page_data) { fail('report-data.json has no page_data key (wrong file or schema)'); return; }
