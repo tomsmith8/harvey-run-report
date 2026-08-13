@@ -861,7 +861,7 @@ addEventListener('scroll', () => {
     if (!resp.ok) { fail(`Fetch failed: HTTP ${resp.status} for ${url.replace(/[<>&]/g,'')}`); return; }
     const b = await resp.json();
     if (!b.page_data) { fail('report-data.json has no page_data key (wrong file or schema)'); return; }
-    if ((b.schema_version || 1) > 1) { fail(`report schema_version ${b.schema_version} is newer than this viewer supports`); }
+    if ((b.schema_version || 1) > 2) { fail(`report schema_version ${b.schema_version} is newer than this viewer supports`); }
     render(b);
   } catch (e) { fail('Could not fetch or parse report data: ' + String(e).replace(/[<>&]/g,'')); }
 })();
