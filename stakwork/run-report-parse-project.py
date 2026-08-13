@@ -799,11 +799,33 @@ def parse_export(raw_text):
         if rubrics_src:
             warnings.append("rubrics taken from build_score_rubric_attrs (set_var rubrics_json missing)")
     crit_by_id = {c.get("id"): c for c in _as_list(scores.get("criteria_results")) if isinstance(c, dict)}
+
+    # Judge-dispute annotations: the run_judge_dispute child reviews failed
+    # criteria and emits disputes_json = [{id, flagged, llm_flag_reason,
+    # document_excerpt}]. Attached to the matching rubric rows when present -
+    # purely additive, verdicts untouched.
+    disputes_by_id = {}
+    for c in children_by_alias.get("run_judge_dispute", []):
+        om = _as_dict(c.get("output"))
+        for key in ("set_output", "normalize_disputes"):
+            block = _as_dict(_as_dict(om.get(key)).get("output"))
+            for d in _as_list(parse_maybe_json(block.get("disputes_json"))):
+                if isinstance(d, dict) and d.get("id"):
+                    disputes_by_id[d["id"]] = d
+            if disputes_by_id:
+                break
+
     rubrics = [{
         "id": r.get("id"), "title": r.get("title"), "match_criteria": r.get("match_criteria"),
         "verdict": crit_by_id.get(r.get("id"), {}).get("verdict", "?"),
         "reasoning": crit_by_id.get(r.get("id"), {}).get("reasoning", ""),
     } for r in rubrics_src if isinstance(r, dict)]
+    for row in rubrics:
+        d = disputes_by_id.get(row["id"])
+        if isinstance(d, dict):
+            row["flagged"] = d.get("flagged")
+            row["llm_flag_reason"] = d.get("llm_flag_reason")
+            row["document_excerpt"] = d.get("document_excerpt")
     if not rubrics:
         warnings.append("rubric extraction produced zero rows")
         degraded = True
